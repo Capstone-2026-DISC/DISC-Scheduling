@@ -1,0 +1,25 @@
+name: Origen del pull request
+
+on:
+  pull_request:
+    branches: [Main, Test]
+
+jobs:
+  origen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revisar rama de origen
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if [ "$BASE" = "Main" ] && [ "$HEAD" != "Test" ]; then
+            echo "Main solo recibe cambios desde Test"
+            exit 1
+          fi
+          if [ "$BASE" = "Test" ]; then
+            case "$HEAD" in
+              "Nicolás"|Cristian|"Fabián") ;;
+              *) echo "Test solo recibe cambios desde las ramas personales"; exit 1 ;;
+            esac
+          fi
