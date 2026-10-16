@@ -2,8 +2,6 @@
 
 <img src="assets/banner.svg" alt="DISC Scheduling" width="100%">
 
-<img src="assets/logo-disc.png" alt="Logo del Departamento de Ingeniería de Sistemas y Computación" width="150">
-
 # DISC Scheduling
 
 Plataforma web de apoyo a la programación académica del Departamento de Ingeniería de Sistemas y Computación de la Universidad Católica del Norte
