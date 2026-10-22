@@ -1,0 +1,39 @@
+name: disc-scheduling
+services:
+  directus:
+    image: docker.io/directus/directus:11.14.1
+    environment:
+      SECRET: ${DIRECTUS_SECRET:?Completa .env}
+      DB_CLIENT: sqlite3
+      DB_FILENAME: /directus/database/data.db
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Completa .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Completa .env}
+      WEBSOCKETS_ENABLED: "false"
+      TELEMETRY: "false"
+    ports:
+      - "127.0.0.1:${DIRECTUS_PORT:-8055}:8055"
+    volumes:
+      - directus_data:/directus/database
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8055/server/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+  api:
+    image: disc-scheduling-api:local
+    build: backend
+    environment:
+      DIRECTUS_URL: http://directus:8055
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      directus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  directus_data:
