@@ -2,7 +2,7 @@ name: Origen del pull request
 
 on:
   pull_request:
-    branches: [Main, Test]
+    branches: [main, test]
 
 jobs:
   origen:
@@ -13,13 +13,13 @@ jobs:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
         run: |
-          if [ "$BASE" = "Main" ] && [ "$HEAD" != "Test" ]; then
-            echo "Main solo recibe cambios desde Test"
+          if [ "$BASE" = "main" ] && [ "$HEAD" != "test" ]; then
+            echo "main solo recibe cambios desde test"
             exit 1
           fi
-          if [ "$BASE" = "Test" ]; then
+          if [ "$BASE" = "test" ]; then
             case "$HEAD" in
               "Nicolás"|Cristian|"Fabián") ;;
-              *) echo "Test solo recibe cambios desde las ramas personales"; exit 1 ;;
+              *) echo "test solo recibe cambios desde las ramas personales"; exit 1 ;;
             esac
           fi
