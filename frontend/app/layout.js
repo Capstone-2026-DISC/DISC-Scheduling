@@ -1,3 +1,5 @@
+import "../styles/globals.css";
+
 export const metadata = {
   title: "DISC Scheduling",
   description: "Programación académica y costo docente para el DISC",
