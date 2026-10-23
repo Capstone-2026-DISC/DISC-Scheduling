@@ -67,8 +67,10 @@ jobs:
           test "$code" = "0"
       - name: Probar el módulo de ejemplo contra Directus real
         run: |
+          set -x
           docker compose --profile demo up --build --wait --wait-timeout 300 --no-deps modulo-simulado
-          curl --fail --silent --show-error http://127.0.0.1:8090/estado -o estado.json
+          curl --silent --show-error http://127.0.0.1:8090/estado -o estado.json -w "estado: %{http_code}\n"
+          cat estado.json; echo
           grep -q '"conectado":true' estado.json
           curl --fail --silent --show-error --output /dev/null -X POST http://127.0.0.1:8090/registro --data-urlencode "clave=ci"
           curl --fail --silent --show-error http://127.0.0.1:8090/ -o pagina.html
