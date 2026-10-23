@@ -1,0 +1,4 @@
+id,departamento_id,codigo,fecha_inicio,fecha_fin,estado
+1,1,202520,2025-08-04,2025-12-20,cerrado
+2,1,202610,2026-03-09,2026-07-18,cerrado
+3,1,202620,2026-08-03,2026-12-19,vigente

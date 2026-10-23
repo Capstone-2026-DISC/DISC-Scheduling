@@ -1,0 +1,13 @@
+id,departamento_id,codigo,nombre,area,requiere_laboratorio,activa,eliminado_en,eliminado_por
+1,1,FAIC-00101,Asignatura de prueba 01,Ficticia C,0,1,,
+2,1,FAIC-00102,Asignatura de prueba 02,Ficticia C,0,1,,
+3,1,FAIC-00103,Asignatura de prueba 03,Ficticia A,1,1,,
+4,1,FAIC-00104,Asignatura de prueba 04,Ficticia B,0,1,,
+5,1,FAIC-00105,Asignatura de prueba 05,Ficticia B,0,1,,
+6,1,FAIC-00106,Asignatura de prueba 06,Ficticia B,1,1,,
+7,1,FAIC-00107,Asignatura de prueba 07,Ficticia A,0,1,,
+8,1,FAIC-00108,Asignatura de prueba 08,Ficticia B,0,1,,
+9,1,FAIC-00109,Asignatura de prueba 09,Ficticia B,1,1,,
+10,1,FAIC-00110,Asignatura de prueba 10,Ficticia B,0,1,,
+11,1,FAIC-00111,Asignatura de prueba 11,Ficticia B,0,1,,
+12,1,FAIC-00112,Asignatura de prueba 12,Ficticia C,0,1,,

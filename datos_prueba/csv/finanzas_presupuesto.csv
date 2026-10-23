@@ -1,0 +1,3 @@
+id,departamento_id,anio,tipo_persona,monto_anual,porcentaje_s1,escenario_id,eliminado_en,eliminado_por
+1,1,2026,profesor_hora,18000000.0,50.0,,,
+2,1,2026,ayudante,6000000.0,50.0,,,

@@ -1,0 +1,4 @@
+id,departamento_id,codigo,nombre,tipo,eliminado_en,eliminado_por
+1,1,PRG1,Programa de prueba 1,pregrado,,
+2,1,PRG2,Programa de prueba 2,pregrado,,
+3,1,PRG3,Programa de prueba 3,minor,,
