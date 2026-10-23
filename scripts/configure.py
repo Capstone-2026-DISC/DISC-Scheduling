@@ -1,14 +1,22 @@
 """Genera credenciales locales sin sobrescribir una configuración existente."""
 import os
 from pathlib import Path
+import base64
 import secrets
 
 target = Path(__file__).resolve().parents[1] / ".env"
+def clave32() -> str:
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+
 values = {
     "DIRECTUS_SECRET": secrets.token_urlsafe(48),
     "ADMIN_EMAIL": "admin@example.com",
     "ADMIN_PASSWORD": secrets.token_urlsafe(32),
     "JWT_SECRET": secrets.token_urlsafe(48),
+    "DATA_KEYS": "k1=" + clave32(),
+    "DATA_KEY_ID": "k1",
+    "INDEX_KEY": clave32(),
     "SEED_ADMIN_PASSWORD": secrets.token_urlsafe(18) + "9a",
     "SEED_TEST_PASSWORD": secrets.token_urlsafe(18) + "9a",
     "SAT_DIRECTUS_SECRET": secrets.token_urlsafe(48),

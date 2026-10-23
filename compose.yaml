@@ -4,6 +4,9 @@ x-api-env: &api-env
   SATELITES_DB_PATH: /satelites/satelites.db
   SCHEMA_PATH: /app/db/esquema_plataforma.sql
   JWT_SECRET: ${JWT_SECRET:?Completa .env}
+  DATA_KEYS: ${DATA_KEYS:?Completa .env}
+  DATA_KEY_ID: ${DATA_KEY_ID:-k1}
+  INDEX_KEY: ${INDEX_KEY:?Completa .env}
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Completa .env}
   SEED_TEST_PASSWORD: ${SEED_TEST_PASSWORD:?Completa .env}
   MODULES: ${MODULES:-base,financiero}
