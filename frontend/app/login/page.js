@@ -1,12 +1,8 @@
 import Image from "next/image";
-import { Martel_Sans } from "next/font/google";
+import "@fontsource/martel-sans/300.css";
+import "@fontsource/martel-sans/700.css";
 import LoginForm from "../../components/forms/LoginForm";
 import styles from "../../styles/login.module.css";
-
-const martelSans = Martel_Sans({
-  subsets: ["latin"],
-  weight: ["300", "700"],
-});
 
 export const metadata = {
   title: "Iniciar Sesión | DISC Scheduling",
@@ -14,7 +10,7 @@ export const metadata = {
 
 export default function LoginPage() {
   return (
-    <main className={`${styles.page} ${martelSans.className}`}>
+    <main className={styles.page}>
       <div className={styles.card}>
         <section className={styles.formPanel}>
           <div className={styles.column}>
