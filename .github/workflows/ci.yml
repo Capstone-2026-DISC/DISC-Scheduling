@@ -67,12 +67,18 @@ jobs:
           test "$code" = "0"
       - name: Probar el módulo de ejemplo contra Directus real
         run: |
-          docker compose --profile demo up --build --wait --wait-timeout 300 modulo-simulado
-          curl --fail --silent http://127.0.0.1:8090/estado | grep -q '"conectado":true'
-          curl --fail --silent --output /dev/null -X POST http://127.0.0.1:8090/registro --data-urlencode "clave=ci"
-          curl --fail --silent http://127.0.0.1:8090/ | grep -q "<td>ci</td>"
-          curl --fail --silent -X POST http://127.0.0.1:8090/limites | tee limites.html | grep -q "rechazado, correcto"
-          ! grep -q "NO fue rechazado" limites.html
+          docker compose --profile demo up --build --wait --wait-timeout 300 --no-deps modulo-simulado
+          curl --fail --silent --show-error http://127.0.0.1:8090/estado -o estado.json
+          grep -q '"conectado":true' estado.json
+          curl --fail --silent --show-error --output /dev/null -X POST http://127.0.0.1:8090/registro --data-urlencode "clave=ci"
+          curl --fail --silent --show-error http://127.0.0.1:8090/ -o pagina.html
+          grep -q "<td>ci</td>" pagina.html
+          curl --fail --silent --show-error -X POST http://127.0.0.1:8090/limites -o limites.html
+          grep -q "rechazado, correcto" limites.html
+          if grep -q "NO fue rechazado" limites.html; then echo "un límite no se cumplió"; cat limites.html; exit 1; fi
+      - name: Diagnóstico del módulo de ejemplo
+        if: failure()
+        run: docker compose --profile demo logs --no-color --tail=40 modulo-simulado
       - name: Probar el frontend
         run: |
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3000/login
