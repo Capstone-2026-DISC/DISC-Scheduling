@@ -6,31 +6,126 @@
 
 Plataforma web de apoyo a la programación académica del Departamento de Ingeniería de Sistemas y Computación de la Universidad Católica del Norte
 
-![UCN](https://img.shields.io/badge/Universidad-Cat%C3%B3lica%20del%20Norte-0b2545?style=for-the-badge)
-![Capstone](https://img.shields.io/badge/Capstone-2026-13a89e?style=for-the-badge)
-![Docker](https://img.shields.io/badge/Docker-listo-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub-Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)
-![Idioma](https://img.shields.io/badge/Idioma-Espa%C3%B1ol-c1121f?style=for-the-badge)
+[![CI](https://github.com/Capstone-2026-DISC/DISC-Scheduling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Capstone-2026-DISC/DISC-Scheduling/actions/workflows/ci.yml)
 
 </div>
 
-## Sobre el proyecto
+## Qué es
 
-Cada semestre el Encargado Docente arma a mano la oferta académica del departamento, asignando asignatura, docente, sala y bloque, y controla por separado el gasto en profesores hora y ayudantes. Este proyecto busca automatizar ese trabajo con una plataforma web que genere horarios sin choques y estime el costo docente de cada semestre.
+Cada semestre el Encargado Docente arma a mano la oferta académica del departamento y controla por separado el gasto en profesores hora y ayudantes. Esta plataforma guarda esos datos, aplica permisos por departamento, deja auditoría de cada cambio y servirá de base para que los grupos de Proyecto Integrador conecten sus módulos.
 
-## Qué incluye
+## Arquitectura
 
-- Módulo base con los datos académicos de cada periodo y contratos de integración para otros módulos
-- Módulo de horarios que lleva la planilla y las restricciones a un motor de optimización y valida el resultado
-- Módulo financiero que compara el costo de profesores hora y ayudantes con el presupuesto
-- Componente predictivo opcional para estimar la inscripción de cada asignatura
+```mermaid
+flowchart LR
+    usuario(["Navegador"]) --> frontend["frontend, Next.js"]
+    frontend -->|API_URL| api["api, FastAPI"]
+    api --- nucleo[("plataforma.db")]
+    nucleo --- directus["directus, solo lectura"]
+    api -->|publica pub_*| replica[("satelites.db")]
+    replica --- satelites["directus-satelites"]
+    modulos["módulos de Proyecto Integrador"] -->|token del grupo| satelites
+```
 
-## Cómo se construye
+Todo usa SQLite. La API es la única que escribe en el núcleo, y Directus lo expone solo para consulta. Los módulos de los grupos leen una réplica sin datos personales y guardan lo suyo en colecciones propias.
 
-- Arquitectura web modular con un adaptador que permite cambiar el motor de horarios
-- FET como motor inicial, con alternativas como MiniZinc y Gurobi
-- Entregas por iteración publicadas como releases
-- Despliegue con contenedores Docker y pruebas automáticas en GitHub Actions
+## Despliegue
+
+Requiere Docker con Compose v2 y Python 3 (solo para generar la configuración).
+
+```bash
+git clone https://github.com/Capstone-2026-DISC/DISC-Scheduling.git
+cd DISC-Scheduling
+python3 scripts/configure.py          # crea .env con claves aleatorias; no se sube al repositorio
+docker compose up --build --wait
+docker compose logs configurar        # debe terminar con "verificación: todo correcto"
+```
+
+El servicio `configurar` corre una vez, deja listos los roles de ambas instancias de Directus y comprueba los permisos. Si termina con error, el despliegue no está bien.
+
+| Servicio | Puerto | Para qué |
+| --- | --- | --- |
+| `frontend` | 3000 | Interfaz web |
+| `api` | 8000 | API. Documentación interactiva en `/docs` |
+| `directus` | 8055 | Consulta del núcleo. Entra con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
+| `directus-satelites` | 8056 | Acceso de los módulos de Proyecto Integrador |
+| `modulo-simulado` | 8090 | Módulo de ejemplo, solo con el perfil `demo` |
+
+Todos los puertos escuchan solo en `127.0.0.1`.
+
+**Usuarios iniciales.** Se crean en el primer arranque, con las claves `SEED_ADMIN_PASSWORD` y `SEED_TEST_PASSWORD` del `.env`.
+
+| Usuario | Rol |
+| --- | --- |
+| `encargado.docente@example.com` | Administrador, con todos los permisos |
+| `usuario.prueba@example.com` | Consulta, solo lectura en el DISC |
+
+**Datos y respaldos.** La base vive en los volúmenes `plataforma_data` y `satelites_data`. El RUT y el correo de las personas se guardan cifrados con `DATA_KEYS` e `INDEX_KEY` del `.env`: respáldelas por separado, porque sin ellas esos datos no se pueden recuperar.
+
+**Detener.** `docker compose down` conserva los datos. `docker compose down -v` los borra.
+
+**Antes de usar datos reales.** El tráfico va por HTTP y la base no está cifrada en disco. Para exponerlo en la red hay que poner HTTPS delante (por ejemplo Caddy con una CA interna) y cifrar el volumen del servidor. Mientras tanto, úsese con los datos de prueba de `datos_prueba/`.
+
+## Módulo de prueba
+
+`ejemplos/modulo_simulado/` es un módulo de Proyecto Integrador mínimo. Sirve de modelo para los grupos y para comprobar la integración.
+
+```bash
+docker compose --profile demo up --build
+```
+
+Abra http://localhost:8090. El módulo habla solo con Directus, con el token de su grupo (`SAT_TOKEN_G1` del `.env`), y muestra:
+
+- el catálogo y el horario aprobado que publica el core (`pub_*`, solo lectura);
+- su propia colección `sat_g1_registro`, donde puede guardar y eliminar registros (el borrado es lógico);
+- el botón «Probar mis límites», que intenta lo que no debe, como leer datos personales o escribir en la colección de otro grupo, y muestra que Directus lo rechaza.
+
+Para otro grupo se cambian `GRUPO`, `DIRECTUS_TOKEN` y `DIRECTUS_URL`. Detalles en [su README](ejemplos/modulo_simulado/README.md).
+
+## Alcance actual
+
+| Parte | Estado |
+| --- | --- |
+| Base de datos, roles, permisos por departamento y auditoría | Disponible |
+| Login con JWT, renovación de sesión y bloqueo por intentos | Disponible |
+| API de catálogo, horarios, finanzas y usuarios, documentada en `/docs` | Disponible |
+| Importación de CSV con plantillas y errores explicados por fila | Disponible |
+| Directus de consulta y réplica para los módulos de los grupos | Disponible |
+| Frontend | Solo la pantalla de inicio de sesión, aún sin conectar a la API |
+| Generación de horarios con el motor de optimización | Pendiente de integrar |
+| Cálculo del costo docente contra el presupuesto | Pendiente |
+| Componente predictivo | Esqueleto |
+
+## Desarrollo y pruebas
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q tests ../datos_prueba/test_datos.py ../plantillas_importacion/test_validar.py ../ejemplos/modulo_simulado/test_modulo.py
+cd .. && python db/probar_esquema.py db/esquema_plataforma.sql
+```
+
+El CI repite esas pruebas, levanta todo con Docker Compose, comprueba los permisos reales de Directus, el frontend y el módulo de ejemplo, y construye las imágenes.
+
+## Estructura
+
+| Carpeta | Contenido |
+| --- | --- |
+| `backend/` | API en FastAPI, con módulos base, financiero y predictivo |
+| `frontend/` | Interfaz en Next.js |
+| `db/` | Esquema SQLite y su generador y pruebas |
+| `ejemplos/modulo_simulado/` | Módulo de ejemplo de Proyecto Integrador |
+| `plantillas_importacion/` | Plantillas CSV y XLSX por colección, con su validador |
+| `datos_prueba/` | Generador de datos ficticios y reproducibles |
+| `docs/` | Documentación técnica |
+| `scripts/` | Generación de la configuración local |
+
+## Documentación
+
+- [Base técnica del backend](docs/backend.md): autenticación, cifrado, auditoría, borrado lógico y satélites.
+- [Matriz de roles y permisos](docs/matriz_permisos.md)
+- [Plantillas de importación](plantillas_importacion/README.md)
+- [Datos de prueba](datos_prueba/DATOS_DE_PRUEBA.md)
 
 ## Equipo
 
@@ -41,4 +136,4 @@ Cada semestre el Encargado Docente arma a mano la oferta académica del departam
 | Cristian Jiménez Fuentes | Estudiante |
 | Dr. Brian Keith Norambuena | Profesor guía |
 
-Proyecto desarrollado para el Departamento de Ingeniería de Sistemas y Computación de la Universidad Católica del Norte, Antofagasta
+Proyecto del Departamento de Ingeniería de Sistemas y Computación, Universidad Católica del Norte, Antofagasta.
