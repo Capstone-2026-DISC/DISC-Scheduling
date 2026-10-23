@@ -53,7 +53,7 @@ CABECERA = """-- ===============================================================
 --
 -- Convenciones:
 --   * nombres en español, snake_case y tablas en singular
---   * id interno INTEGER PRIMARY KEY + clave natural única (codigo, rut, nrc)
+--   * id interno INTEGER PRIMARY KEY + clave natural única (codigo, nrc; la persona, por el índice ciego de su RUT)
 --   * tablas STRICT: booleanos como INTEGER 0/1, fechas y horas como texto ISO 8601 (UTC),
 --     JSON como TEXT validado con json_valid()
 --   * valores cerrados con CHECK
@@ -74,8 +74,9 @@ CABECERA = """-- ===============================================================
 --       DELETE FROM plataforma_auditoria WHERE en < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 years');
 --   * acceso de los satélites: lectura mediante Directus (opción A) sobre este mismo archivo;
 --     identidad sigue siendo la fuente de usuarios y roles. Las tablas directus_* quedan aparte.
---   * lo que SQLite no hace y vive en la aplicación: validar el RUT contra el dígito verificador
---     ya lo hace un trigger; las reglas de negocio de la verificación (hallazgos) las escribe
+--   * datos personales cifrados: el RUT y el correo (catalogo_persona, envíos) van cifrados por la aplicación y el RUT
+--     se busca por un índice ciego. Lo que SQLite no hace y vive en la aplicación: cifrar y descifrar, validar el
+--     dígito verificador del RUT; las reglas de negocio de la verificación (hallazgos) las escribe
 --     el verificador independiente.
 --
 -- Crear la base: sqlite3 plataforma.db < esquema_plataforma.sql
@@ -228,7 +229,7 @@ CREATE TABLE plataforma_importacion (
   creada_en           @TS@
 ) STRICT;
 
--- Filas crudas tal como venían. Contienen RUT y nombres: al cerrar el periodo se anonimizan, no se borran:
+-- Filas crudas tal como venían. El RUT y el correo se guardan cifrados; el nombre no. Al cerrar el periodo se anonimizan, no se borran:
 --   UPDATE plataforma_fila_importada SET datos = '{}', anonimizada_en = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 --   WHERE importacion_id = ? AND anonimizada_en IS NULL;
 -- errores lleva, por cada problema, la columna, qué falló y cómo corregirlo:
@@ -356,13 +357,16 @@ CREATE TABLE catalogo_sala (
 ) STRICT;
 
 -- Datos personales mínimos: RUT, nombre y correo. No se guarda nada de estudiantes.
--- RUT normalizado: cuerpo sin puntos, guion y dígito verificador en mayúscula (12345678-5).
+-- El RUT y el correo se guardan CIFRADOS (AES-256-GCM, en la aplicación; ver docs/backend.md): la base solo ve texto
+-- cifrado, así que un volcado, una copia de seguridad, la auditoría o Directus no los muestran. El RUT no es clave en
+-- ninguna tabla: las demás tablas apuntan a id. rut_indice es un HMAC-SHA256 con clave aparte del RUT normalizado
+-- (12345678-5): permite buscar y exigir unicidad sin descifrar. Validar el dígito verificador es tarea de la aplicación.
 CREATE TABLE catalogo_persona (
-  id      INTEGER PRIMARY KEY,
-  rut     TEXT NOT NULL UNIQUE CHECK (rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]'
-                                      OR rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]'),
-  nombre  TEXT NOT NULL,
-  email   TEXT,
+  id             INTEGER PRIMARY KEY,
+  rut_cifrado    TEXT NOT NULL CHECK (rut_cifrado GLOB 'v1:*'),
+  rut_indice     TEXT NOT NULL UNIQUE CHECK (length(rut_indice) = 64),
+  nombre         TEXT NOT NULL,
+  email_cifrado  TEXT CHECK (email_cifrado IS NULL OR email_cifrado GLOB 'v1:*'),
   @SD@
 ) STRICT;
 
@@ -380,26 +384,6 @@ CREATE TABLE catalogo_ayudante (
   activo           INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
   @SD@
 ) STRICT;
-
--- El dígito verificador del RUT se comprueba con el módulo 11 (factores 2 a 7, de derecha a izquierda).
-CREATE TRIGGER persona_rut_valido_i BEFORE INSERT ON catalogo_persona
-WHEN (WITH RECURSIVE r(pos, suma) AS (
-        SELECT length(NEW.rut) - 2, 0
-        UNION ALL
-        SELECT pos - 1, suma + CAST(substr(NEW.rut, pos, 1) AS INTEGER) * (((length(NEW.rut) - 2 - pos) % 6) + 2)
-        FROM r WHERE pos >= 1)
-      SELECT CASE 11 - (suma % 11) WHEN 11 THEN '0' WHEN 10 THEN 'K' ELSE CAST(11 - (suma % 11) AS TEXT) END
-      FROM r WHERE pos = 0) IS NOT substr(NEW.rut, -1)
-BEGIN SELECT RAISE(ABORT, 'RUT inválido: el dígito verificador no corresponde'); END;
-CREATE TRIGGER persona_rut_valido_u BEFORE UPDATE OF rut ON catalogo_persona
-WHEN (WITH RECURSIVE r(pos, suma) AS (
-        SELECT length(NEW.rut) - 2, 0
-        UNION ALL
-        SELECT pos - 1, suma + CAST(substr(NEW.rut, pos, 1) AS INTEGER) * (((length(NEW.rut) - 2 - pos) % 6) + 2)
-        FROM r WHERE pos >= 1)
-      SELECT CASE 11 - (suma % 11) WHEN 11 THEN '0' WHEN 10 THEN 'K' ELSE CAST(11 - (suma % 11) AS TEXT) END
-      FROM r WHERE pos = 0) IS NOT substr(NEW.rut, -1)
-BEGIN SELECT RAISE(ABORT, 'RUT inválido: el dígito verificador no corresponde'); END;
 
 """
 
@@ -634,7 +618,7 @@ CREATE TABLE horarios_envio_horario (
   id            INTEGER PRIMARY KEY,
   propuesta_id  INTEGER NOT NULL REFERENCES horarios_propuesta,
   docente_id    INTEGER NOT NULL REFERENCES catalogo_docente,
-  email_destino TEXT NOT NULL,
+  email_destino_cifrado TEXT NOT NULL CHECK (email_destino_cifrado GLOB 'v1:*'),   -- correo del docente, cifrado como el de catalogo_persona
   estado        TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'enviado', 'error')),
   error         TEXT,
   creado_por    INTEGER REFERENCES identidad_usuario,

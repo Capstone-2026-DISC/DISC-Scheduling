@@ -25,7 +25,7 @@
 --
 -- Convenciones:
 --   * nombres en español, snake_case y tablas en singular
---   * id interno INTEGER PRIMARY KEY + clave natural única (codigo, rut, nrc)
+--   * id interno INTEGER PRIMARY KEY + clave natural única (codigo, nrc; la persona, por el índice ciego de su RUT)
 --   * tablas STRICT: booleanos como INTEGER 0/1, fechas y horas como texto ISO 8601 (UTC),
 --     JSON como TEXT validado con json_valid()
 --   * valores cerrados con CHECK
@@ -46,8 +46,9 @@
 --       DELETE FROM plataforma_auditoria WHERE en < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 years');
 --   * acceso de los satélites: lectura mediante Directus (opción A) sobre este mismo archivo;
 --     identidad sigue siendo la fuente de usuarios y roles. Las tablas directus_* quedan aparte.
---   * lo que SQLite no hace y vive en la aplicación: validar el RUT contra el dígito verificador
---     ya lo hace un trigger; las reglas de negocio de la verificación (hallazgos) las escribe
+--   * datos personales cifrados: el RUT y el correo (catalogo_persona, envíos) van cifrados por la aplicación y el RUT
+--     se busca por un índice ciego. Lo que SQLite no hace y vive en la aplicación: cifrar y descifrar, validar el
+--     dígito verificador del RUT; las reglas de negocio de la verificación (hallazgos) las escribe
 --     el verificador independiente.
 --
 -- Crear la base: sqlite3 plataforma.db < esquema_plataforma.sql
@@ -199,7 +200,7 @@ CREATE TABLE plataforma_importacion (
   creada_en           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ) STRICT;
 
--- Filas crudas tal como venían. Contienen RUT y nombres: al cerrar el periodo se anonimizan, no se borran:
+-- Filas crudas tal como venían. El RUT y el correo se guardan cifrados; el nombre no. Al cerrar el periodo se anonimizan, no se borran:
 --   UPDATE plataforma_fila_importada SET datos = '{}', anonimizada_en = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 --   WHERE importacion_id = ? AND anonimizada_en IS NULL;
 -- errores lleva, por cada problema, la columna, qué falló y cómo corregirlo:
@@ -328,13 +329,16 @@ CREATE TABLE catalogo_sala (
 ) STRICT;
 
 -- Datos personales mínimos: RUT, nombre y correo. No se guarda nada de estudiantes.
--- RUT normalizado: cuerpo sin puntos, guion y dígito verificador en mayúscula (12345678-5).
+-- El RUT y el correo se guardan CIFRADOS (AES-256-GCM, en la aplicación; ver docs/backend.md): la base solo ve texto
+-- cifrado, así que un volcado, una copia de seguridad, la auditoría o Directus no los muestran. El RUT no es clave en
+-- ninguna tabla: las demás tablas apuntan a id. rut_indice es un HMAC-SHA256 con clave aparte del RUT normalizado
+-- (12345678-5): permite buscar y exigir unicidad sin descifrar. Validar el dígito verificador es tarea de la aplicación.
 CREATE TABLE catalogo_persona (
-  id      INTEGER PRIMARY KEY,
-  rut     TEXT NOT NULL UNIQUE CHECK (rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]'
-                                      OR rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]'),
-  nombre  TEXT NOT NULL,
-  email   TEXT,
+  id             INTEGER PRIMARY KEY,
+  rut_cifrado    TEXT NOT NULL CHECK (rut_cifrado GLOB 'v1:*'),
+  rut_indice     TEXT NOT NULL UNIQUE CHECK (length(rut_indice) = 64),
+  nombre         TEXT NOT NULL,
+  email_cifrado  TEXT CHECK (email_cifrado IS NULL OR email_cifrado GLOB 'v1:*'),
   eliminado_en TEXT,
   eliminado_por INTEGER REFERENCES identidad_usuario
 ) STRICT;
@@ -355,26 +359,6 @@ CREATE TABLE catalogo_ayudante (
   eliminado_en TEXT,
   eliminado_por INTEGER REFERENCES identidad_usuario
 ) STRICT;
-
--- El dígito verificador del RUT se comprueba con el módulo 11 (factores 2 a 7, de derecha a izquierda).
-CREATE TRIGGER persona_rut_valido_i BEFORE INSERT ON catalogo_persona
-WHEN (WITH RECURSIVE r(pos, suma) AS (
-        SELECT length(NEW.rut) - 2, 0
-        UNION ALL
-        SELECT pos - 1, suma + CAST(substr(NEW.rut, pos, 1) AS INTEGER) * (((length(NEW.rut) - 2 - pos) % 6) + 2)
-        FROM r WHERE pos >= 1)
-      SELECT CASE 11 - (suma % 11) WHEN 11 THEN '0' WHEN 10 THEN 'K' ELSE CAST(11 - (suma % 11) AS TEXT) END
-      FROM r WHERE pos = 0) IS NOT substr(NEW.rut, -1)
-BEGIN SELECT RAISE(ABORT, 'RUT inválido: el dígito verificador no corresponde'); END;
-CREATE TRIGGER persona_rut_valido_u BEFORE UPDATE OF rut ON catalogo_persona
-WHEN (WITH RECURSIVE r(pos, suma) AS (
-        SELECT length(NEW.rut) - 2, 0
-        UNION ALL
-        SELECT pos - 1, suma + CAST(substr(NEW.rut, pos, 1) AS INTEGER) * (((length(NEW.rut) - 2 - pos) % 6) + 2)
-        FROM r WHERE pos >= 1)
-      SELECT CASE 11 - (suma % 11) WHEN 11 THEN '0' WHEN 10 THEN 'K' ELSE CAST(11 - (suma % 11) AS TEXT) END
-      FROM r WHERE pos = 0) IS NOT substr(NEW.rut, -1)
-BEGIN SELECT RAISE(ABORT, 'RUT inválido: el dígito verificador no corresponde'); END;
 
 -- ---------------------------------------------------------------------
 -- 4. horarios
@@ -612,7 +596,7 @@ CREATE TABLE horarios_envio_horario (
   id            INTEGER PRIMARY KEY,
   propuesta_id  INTEGER NOT NULL REFERENCES horarios_propuesta,
   docente_id    INTEGER NOT NULL REFERENCES catalogo_docente,
-  email_destino TEXT NOT NULL,
+  email_destino_cifrado TEXT NOT NULL CHECK (email_destino_cifrado GLOB 'v1:*'),   -- correo del docente, cifrado como el de catalogo_persona
   estado        TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'enviado', 'error')),
   error         TEXT,
   creado_por    INTEGER REFERENCES identidad_usuario,
@@ -1144,20 +1128,20 @@ END;
 CREATE TRIGGER auditar_catalogo_persona_i AFTER INSERT ON catalogo_persona
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, despues)
-  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'insert', 'catalogo_persona', NEW.id, json_object('id', NEW.id, 'rut', NEW.rut, 'nombre', NEW.nombre, 'email', NEW.email, 'eliminado_en', NEW.eliminado_en, 'eliminado_por', NEW.eliminado_por));
+  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'insert', 'catalogo_persona', NEW.id, json_object('id', NEW.id, 'rut_cifrado', NEW.rut_cifrado, 'rut_indice', NEW.rut_indice, 'nombre', NEW.nombre, 'email_cifrado', NEW.email_cifrado, 'eliminado_en', NEW.eliminado_en, 'eliminado_por', NEW.eliminado_por));
 END;
 CREATE TRIGGER auditar_catalogo_persona_u AFTER UPDATE ON catalogo_persona
-WHEN OLD.id IS NOT NEW.id OR OLD.rut IS NOT NEW.rut OR OLD.nombre IS NOT NEW.nombre OR OLD.email IS NOT NEW.email OR OLD.eliminado_en IS NOT NEW.eliminado_en OR OLD.eliminado_por IS NOT NEW.eliminado_por
+WHEN OLD.id IS NOT NEW.id OR OLD.rut_cifrado IS NOT NEW.rut_cifrado OR OLD.rut_indice IS NOT NEW.rut_indice OR OLD.nombre IS NOT NEW.nombre OR OLD.email_cifrado IS NOT NEW.email_cifrado OR OLD.eliminado_en IS NOT NEW.eliminado_en OR OLD.eliminado_por IS NOT NEW.eliminado_por
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes, despues)
   VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'update', 'catalogo_persona', NEW.id,
-          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, OLD.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'rut' AS k, OLD.rut AS v WHERE OLD.rut IS NOT NEW.rut UNION ALL SELECT 'nombre' AS k, OLD.nombre AS v WHERE OLD.nombre IS NOT NEW.nombre UNION ALL SELECT 'email' AS k, OLD.email AS v WHERE OLD.email IS NOT NEW.email UNION ALL SELECT 'eliminado_en' AS k, OLD.eliminado_en AS v WHERE OLD.eliminado_en IS NOT NEW.eliminado_en UNION ALL SELECT 'eliminado_por' AS k, OLD.eliminado_por AS v WHERE OLD.eliminado_por IS NOT NEW.eliminado_por)),
-          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, NEW.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'rut' AS k, NEW.rut AS v WHERE OLD.rut IS NOT NEW.rut UNION ALL SELECT 'nombre' AS k, NEW.nombre AS v WHERE OLD.nombre IS NOT NEW.nombre UNION ALL SELECT 'email' AS k, NEW.email AS v WHERE OLD.email IS NOT NEW.email UNION ALL SELECT 'eliminado_en' AS k, NEW.eliminado_en AS v WHERE OLD.eliminado_en IS NOT NEW.eliminado_en UNION ALL SELECT 'eliminado_por' AS k, NEW.eliminado_por AS v WHERE OLD.eliminado_por IS NOT NEW.eliminado_por)));
+          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, OLD.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'rut_cifrado' AS k, OLD.rut_cifrado AS v WHERE OLD.rut_cifrado IS NOT NEW.rut_cifrado UNION ALL SELECT 'rut_indice' AS k, OLD.rut_indice AS v WHERE OLD.rut_indice IS NOT NEW.rut_indice UNION ALL SELECT 'nombre' AS k, OLD.nombre AS v WHERE OLD.nombre IS NOT NEW.nombre UNION ALL SELECT 'email_cifrado' AS k, OLD.email_cifrado AS v WHERE OLD.email_cifrado IS NOT NEW.email_cifrado UNION ALL SELECT 'eliminado_en' AS k, OLD.eliminado_en AS v WHERE OLD.eliminado_en IS NOT NEW.eliminado_en UNION ALL SELECT 'eliminado_por' AS k, OLD.eliminado_por AS v WHERE OLD.eliminado_por IS NOT NEW.eliminado_por)),
+          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, NEW.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'rut_cifrado' AS k, NEW.rut_cifrado AS v WHERE OLD.rut_cifrado IS NOT NEW.rut_cifrado UNION ALL SELECT 'rut_indice' AS k, NEW.rut_indice AS v WHERE OLD.rut_indice IS NOT NEW.rut_indice UNION ALL SELECT 'nombre' AS k, NEW.nombre AS v WHERE OLD.nombre IS NOT NEW.nombre UNION ALL SELECT 'email_cifrado' AS k, NEW.email_cifrado AS v WHERE OLD.email_cifrado IS NOT NEW.email_cifrado UNION ALL SELECT 'eliminado_en' AS k, NEW.eliminado_en AS v WHERE OLD.eliminado_en IS NOT NEW.eliminado_en UNION ALL SELECT 'eliminado_por' AS k, NEW.eliminado_por AS v WHERE OLD.eliminado_por IS NOT NEW.eliminado_por)));
 END;
 CREATE TRIGGER auditar_catalogo_persona_d AFTER DELETE ON catalogo_persona
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes)
-  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'delete', 'catalogo_persona', OLD.id, json_object('id', OLD.id, 'rut', OLD.rut, 'nombre', OLD.nombre, 'email', OLD.email, 'eliminado_en', OLD.eliminado_en, 'eliminado_por', OLD.eliminado_por));
+  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'delete', 'catalogo_persona', OLD.id, json_object('id', OLD.id, 'rut_cifrado', OLD.rut_cifrado, 'rut_indice', OLD.rut_indice, 'nombre', OLD.nombre, 'email_cifrado', OLD.email_cifrado, 'eliminado_en', OLD.eliminado_en, 'eliminado_por', OLD.eliminado_por));
 END;
 
 CREATE TRIGGER auditar_catalogo_docente_i AFTER INSERT ON catalogo_docente
@@ -1353,20 +1337,20 @@ END;
 CREATE TRIGGER auditar_horarios_envio_horario_i AFTER INSERT ON horarios_envio_horario
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, despues)
-  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'insert', 'horarios_envio_horario', NEW.id, json_object('id', NEW.id, 'propuesta_id', NEW.propuesta_id, 'docente_id', NEW.docente_id, 'email_destino', NEW.email_destino, 'estado', NEW.estado, 'error', NEW.error, 'creado_por', NEW.creado_por, 'creado_en', NEW.creado_en, 'enviado_en', NEW.enviado_en));
+  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'insert', 'horarios_envio_horario', NEW.id, json_object('id', NEW.id, 'propuesta_id', NEW.propuesta_id, 'docente_id', NEW.docente_id, 'email_destino_cifrado', NEW.email_destino_cifrado, 'estado', NEW.estado, 'error', NEW.error, 'creado_por', NEW.creado_por, 'creado_en', NEW.creado_en, 'enviado_en', NEW.enviado_en));
 END;
 CREATE TRIGGER auditar_horarios_envio_horario_u AFTER UPDATE ON horarios_envio_horario
-WHEN OLD.id IS NOT NEW.id OR OLD.propuesta_id IS NOT NEW.propuesta_id OR OLD.docente_id IS NOT NEW.docente_id OR OLD.email_destino IS NOT NEW.email_destino OR OLD.estado IS NOT NEW.estado OR OLD.error IS NOT NEW.error OR OLD.creado_por IS NOT NEW.creado_por OR OLD.creado_en IS NOT NEW.creado_en OR OLD.enviado_en IS NOT NEW.enviado_en
+WHEN OLD.id IS NOT NEW.id OR OLD.propuesta_id IS NOT NEW.propuesta_id OR OLD.docente_id IS NOT NEW.docente_id OR OLD.email_destino_cifrado IS NOT NEW.email_destino_cifrado OR OLD.estado IS NOT NEW.estado OR OLD.error IS NOT NEW.error OR OLD.creado_por IS NOT NEW.creado_por OR OLD.creado_en IS NOT NEW.creado_en OR OLD.enviado_en IS NOT NEW.enviado_en
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes, despues)
   VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'update', 'horarios_envio_horario', NEW.id,
-          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, OLD.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'propuesta_id' AS k, OLD.propuesta_id AS v WHERE OLD.propuesta_id IS NOT NEW.propuesta_id UNION ALL SELECT 'docente_id' AS k, OLD.docente_id AS v WHERE OLD.docente_id IS NOT NEW.docente_id UNION ALL SELECT 'email_destino' AS k, OLD.email_destino AS v WHERE OLD.email_destino IS NOT NEW.email_destino UNION ALL SELECT 'estado' AS k, OLD.estado AS v WHERE OLD.estado IS NOT NEW.estado UNION ALL SELECT 'error' AS k, OLD.error AS v WHERE OLD.error IS NOT NEW.error UNION ALL SELECT 'creado_por' AS k, OLD.creado_por AS v WHERE OLD.creado_por IS NOT NEW.creado_por UNION ALL SELECT 'creado_en' AS k, OLD.creado_en AS v WHERE OLD.creado_en IS NOT NEW.creado_en UNION ALL SELECT 'enviado_en' AS k, OLD.enviado_en AS v WHERE OLD.enviado_en IS NOT NEW.enviado_en)),
-          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, NEW.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'propuesta_id' AS k, NEW.propuesta_id AS v WHERE OLD.propuesta_id IS NOT NEW.propuesta_id UNION ALL SELECT 'docente_id' AS k, NEW.docente_id AS v WHERE OLD.docente_id IS NOT NEW.docente_id UNION ALL SELECT 'email_destino' AS k, NEW.email_destino AS v WHERE OLD.email_destino IS NOT NEW.email_destino UNION ALL SELECT 'estado' AS k, NEW.estado AS v WHERE OLD.estado IS NOT NEW.estado UNION ALL SELECT 'error' AS k, NEW.error AS v WHERE OLD.error IS NOT NEW.error UNION ALL SELECT 'creado_por' AS k, NEW.creado_por AS v WHERE OLD.creado_por IS NOT NEW.creado_por UNION ALL SELECT 'creado_en' AS k, NEW.creado_en AS v WHERE OLD.creado_en IS NOT NEW.creado_en UNION ALL SELECT 'enviado_en' AS k, NEW.enviado_en AS v WHERE OLD.enviado_en IS NOT NEW.enviado_en)));
+          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, OLD.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'propuesta_id' AS k, OLD.propuesta_id AS v WHERE OLD.propuesta_id IS NOT NEW.propuesta_id UNION ALL SELECT 'docente_id' AS k, OLD.docente_id AS v WHERE OLD.docente_id IS NOT NEW.docente_id UNION ALL SELECT 'email_destino_cifrado' AS k, OLD.email_destino_cifrado AS v WHERE OLD.email_destino_cifrado IS NOT NEW.email_destino_cifrado UNION ALL SELECT 'estado' AS k, OLD.estado AS v WHERE OLD.estado IS NOT NEW.estado UNION ALL SELECT 'error' AS k, OLD.error AS v WHERE OLD.error IS NOT NEW.error UNION ALL SELECT 'creado_por' AS k, OLD.creado_por AS v WHERE OLD.creado_por IS NOT NEW.creado_por UNION ALL SELECT 'creado_en' AS k, OLD.creado_en AS v WHERE OLD.creado_en IS NOT NEW.creado_en UNION ALL SELECT 'enviado_en' AS k, OLD.enviado_en AS v WHERE OLD.enviado_en IS NOT NEW.enviado_en)),
+          (SELECT json_group_object(k, v) FROM (SELECT 'id' AS k, NEW.id AS v WHERE OLD.id IS NOT NEW.id UNION ALL SELECT 'propuesta_id' AS k, NEW.propuesta_id AS v WHERE OLD.propuesta_id IS NOT NEW.propuesta_id UNION ALL SELECT 'docente_id' AS k, NEW.docente_id AS v WHERE OLD.docente_id IS NOT NEW.docente_id UNION ALL SELECT 'email_destino_cifrado' AS k, NEW.email_destino_cifrado AS v WHERE OLD.email_destino_cifrado IS NOT NEW.email_destino_cifrado UNION ALL SELECT 'estado' AS k, NEW.estado AS v WHERE OLD.estado IS NOT NEW.estado UNION ALL SELECT 'error' AS k, NEW.error AS v WHERE OLD.error IS NOT NEW.error UNION ALL SELECT 'creado_por' AS k, NEW.creado_por AS v WHERE OLD.creado_por IS NOT NEW.creado_por UNION ALL SELECT 'creado_en' AS k, NEW.creado_en AS v WHERE OLD.creado_en IS NOT NEW.creado_en UNION ALL SELECT 'enviado_en' AS k, NEW.enviado_en AS v WHERE OLD.enviado_en IS NOT NEW.enviado_en)));
 END;
 CREATE TRIGGER auditar_horarios_envio_horario_d AFTER DELETE ON horarios_envio_horario
 BEGIN
   INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes)
-  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'delete', 'horarios_envio_horario', OLD.id, json_object('id', OLD.id, 'propuesta_id', OLD.propuesta_id, 'docente_id', OLD.docente_id, 'email_destino', OLD.email_destino, 'estado', OLD.estado, 'error', OLD.error, 'creado_por', OLD.creado_por, 'creado_en', OLD.creado_en, 'enviado_en', OLD.enviado_en));
+  VALUES ((SELECT usuario_id FROM plataforma_contexto), (SELECT ip FROM plataforma_contexto), NULL, 'delete', 'horarios_envio_horario', OLD.id, json_object('id', OLD.id, 'propuesta_id', OLD.propuesta_id, 'docente_id', OLD.docente_id, 'email_destino_cifrado', OLD.email_destino_cifrado, 'estado', OLD.estado, 'error', OLD.error, 'creado_por', OLD.creado_por, 'creado_en', OLD.creado_en, 'enviado_en', OLD.enviado_en));
 END;
 
 CREATE TRIGGER auditar_finanzas_escenario_i AFTER INSERT ON finanzas_escenario

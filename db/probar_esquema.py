@@ -50,11 +50,24 @@ con.execute("INSERT INTO horarios_corrida (periodo_id, perfil_id, semilla, estad
             (json.dumps([{"id": rid}]),))
 con.execute("INSERT INTO horarios_propuesta (periodo_id, corrida_id, nombre, completa) VALUES (1, 1, 'p1', 1), (1, 1, 'p2', 1)")
 
-print("-- RUT")
-pasa("RUT válido 12345678-5", None, "INSERT INTO catalogo_persona (rut, nombre) VALUES ('12345678-5', 'A')")
-falla("RUT con dígito verificador malo", None, "INSERT INTO catalogo_persona (rut, nombre) VALUES ('12345678-9', 'B')")
-falla("RUT con formato malo", None, "INSERT INTO catalogo_persona (rut, nombre) VALUES ('1234', 'C')")
-pasa("RUT con K (6-K)... 16.000.000-K", None, "INSERT INTO catalogo_persona (rut, nombre) VALUES ('7000000-K', 'D')") if False else None
+print("-- datos personales cifrados")
+IDX1, IDX2 = "a" * 64, "b" * 64
+pasa("persona con RUT y correo cifrados", None,
+     "INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre, email_cifrado) VALUES ('v1:k1:AAAA', ?, 'A', 'v1:k1:BBBB')", IDX1)
+falla("el mismo RUT (mismo índice ciego) no se repite", None,
+      "INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre) VALUES ('v1:k1:CCCC', ?, 'B')", IDX1)
+falla("un RUT en claro no entra donde va el cifrado", None,
+      "INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre) VALUES ('12345678-5', ?, 'C')", IDX2)
+falla("un correo en claro no entra donde va el cifrado", None,
+      "INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre, email_cifrado) VALUES ('v1:k1:DDDD', ?, 'D', 'a@b.cl')", IDX2)
+falla("el índice ciego tiene 64 caracteres", None,
+      "INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre) VALUES ('v1:k1:EEEE', 'corto', 'E')")
+falla("el correo del envío no se guarda en claro", None,
+      "INSERT INTO horarios_envio_horario (propuesta_id, docente_id, email_destino_cifrado) VALUES (1, 1, 'a@b.cl')")
+aud = uno("SELECT despues FROM plataforma_auditoria WHERE entidad = 'catalogo_persona' ORDER BY id LIMIT 1")
+ok += 1 if ("rut_cifrado" in aud and "12345678" not in aud) else 0
+fallos += 0 if ("rut_cifrado" in aud and "12345678" not in aud) else 1
+print("PASA  (la auditoría de una persona solo trae texto cifrado)" if "12345678" not in aud else "FALLA auditoría con RUT en claro")
 
 print("-- aislamiento entre departamentos")
 falla("ED de DMAT edita horarios de DISC", 3, "INSERT INTO horarios_asignacion (propuesta_id, sesion_id, dia, bloque) VALUES (1, 1, 'Lu', 'A')")
