@@ -89,6 +89,7 @@ Los grupos de Proyecto Integrador se conectan a una instancia aparte de Directus
 - `python -m app.publicacion` o `POST /publicacion` (permiso `horarios.exportar`) regenera las tablas `pub_*`: catálogo del DISC y el horario de la propuesta aprobada. No se copia ninguna persona, docente, nombramiento, finanza ni auditoría.
 - Cada grupo (`g1` a `g4`) tiene un rol y un token estático (`SAT_TOKEN_G1` a `G4` del `.env`). Lee `pub_*`, y solo escribe en su colección `sat_<grupo>_registro`, con borrado lógico y sin permiso de `DELETE`. No ve usuarios, roles ni la colección de otro grupo.
 - La instancia limita las peticiones por IP (60 por minuto, ajustable con `RATE_LIMIT_POINTS`). El paso de verificación comprueba que el límite frena a un satélite que abusa.
+- `ejemplos/modulo_simulado/` es un módulo de ejemplo que usa exactamente este camino: lee `pub_*`, escribe en su colección y comprueba sus límites. Se levanta con `docker compose --profile demo up --build` y sirve de modelo para los grupos.
 - Para más colecciones de un grupo se crean con el prefijo `sat_<grupo>_` y se agregan a su política.
 
 ## Importación
