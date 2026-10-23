@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ....core import audit, pii
 from ....core.crud import crear_router
+from ....core.openapi import ERRORES_ESCRITURA, RESPUESTAS
 from ....core.deps import Usuario, get_cifrador, get_conn, get_ip, requiere
 from ....core.recurso import Repositorio, traducir_error
 from . import repository as r
@@ -14,7 +15,7 @@ from . import schemas as s
 
 def personas() -> APIRouter:
     """Personas: el RUT y el correo se guardan cifrados (core/pii.py). Quien lee datos personales queda en la auditoría."""
-    router = APIRouter(prefix="/personas", tags=["catálogo (datos personales)"])
+    router = APIRouter(prefix="/personas", tags=["catálogo (datos personales)"], responses={**RESPUESTAS, **ERRORES_ESCRITURA})
 
     def validar_cuerpo(rut: str | None, email: str | None) -> None:
         if rut is not None and not pii.rut_valido(rut):
@@ -29,7 +30,7 @@ def personas() -> APIRouter:
         audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="lectura_datos_personales", entidad="catalogo_persona",
                         entidad_id=clave, detalle={"cantidad": cantidad})
 
-    @router.get("")
+    @router.get("", summary="Listar personas", description="Requiere `personas.ver_datos_personales`. Devuelve el RUT y el correo descifrados; cada lectura queda registrada en la auditoría con usuario e IP.")
     def listar(limite: int = Query(100, ge=1, le=500), desplazamiento: int = Query(0, ge=0),
                usuario: Usuario = Depends(requiere("personas.ver_datos_personales")),
                conn: sqlite3.Connection = Depends(get_conn), cif=Depends(get_cifrador), ip: str | None = Depends(get_ip)):
@@ -40,7 +41,7 @@ def personas() -> APIRouter:
         auditar_lectura(conn, usuario, ip, len(filas))
         return filas
 
-    @router.get("/{pid}")
+    @router.get("/{pid}", summary="Ver una persona", description="Requiere `personas.ver_datos_personales`. La lectura queda auditada.")
     def leer(pid: int, usuario: Usuario = Depends(requiere("personas.ver_datos_personales")),
              conn: sqlite3.Connection = Depends(get_conn), cif=Depends(get_cifrador), ip: str | None = Depends(get_ip)):
         try:
@@ -52,7 +53,7 @@ def personas() -> APIRouter:
         auditar_lectura(conn, usuario, ip, 1, pid)
         return fila
 
-    @router.post("", status_code=201)
+    @router.post("", status_code=201, summary="Crear una persona", description="Requiere `catalogo.editar`. El RUT se acepta con o sin puntos y se valida con su dígito verificador (422 dice cuál debería ser); 409 si ya existe. El RUT y el correo se guardan cifrados.")
     def crear(datos: s.PersonaIn, usuario: Usuario = Depends(requiere("catalogo.editar")),
               conn: sqlite3.Connection = Depends(get_conn), cif=Depends(get_cifrador), ip: str | None = Depends(get_ip)):
         validar_cuerpo(datos.rut, datos.email)
@@ -63,7 +64,7 @@ def personas() -> APIRouter:
         except sqlite3.Error as exc:
             raise traducir_error(exc) from exc
 
-    @router.patch("/{pid}", status_code=204)
+    @router.patch("/{pid}", status_code=204, summary="Modificar una persona", description="Requiere `catalogo.editar`. Cambia solo los campos enviados; las mismas validaciones que al crear.")
     def actualizar(pid: int, datos: s.PersonaPatch, usuario: Usuario = Depends(requiere("catalogo.editar")),
                    conn: sqlite3.Connection = Depends(get_conn), cif=Depends(get_cifrador), ip: str | None = Depends(get_ip)):
         cambios = datos.model_dump(exclude_unset=True)
@@ -81,7 +82,7 @@ def personas() -> APIRouter:
             raise traducir_error(exc) from exc
         return Response(status_code=204)
 
-    @router.delete("/{pid}", status_code=204)
+    @router.delete("/{pid}", status_code=204, summary="Eliminar una persona", description="Requiere `catalogo.editar`. Borrado lógico.")
     def eliminar(pid: int, usuario: Usuario = Depends(requiere("catalogo.editar")),
                  conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
         try:

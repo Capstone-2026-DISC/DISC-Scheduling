@@ -8,10 +8,10 @@ from ...core import audit
 from ...core.deps import Usuario, get_conn, get_ip, requiere
 from ...publicacion import publicar
 
-router = APIRouter(prefix="/publicacion", tags=["satélites"])
+router = APIRouter(prefix="/publicacion", tags=["satélites"], responses={401: {"description": "Token ausente, inválido o vencido."}, 403: {"description": "Falta `horarios.exportar`."}})
 
 
-@router.post("")
+@router.post("", summary="Regenerar la réplica para los satélites", description="Requiere `horarios.exportar`. Copia el catálogo y el horario aprobado, sin datos personales, a la base que leen los módulos de Proyecto Integrador.")
 def publicar_replica(usuario: Usuario = Depends(requiere("horarios.exportar")),
                      conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
     cuentas = publicar(conn, os.environ.get("SATELITES_DB_PATH", "/satelites/satelites.db"))

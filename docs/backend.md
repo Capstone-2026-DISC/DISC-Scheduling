@@ -31,6 +31,12 @@ Las claves de los usuarios semilla salen de `SEED_ADMIN_PASSWORD` y `SEED_TEST_P
 
 Las claves se guardan con argon2id y del refresh token solo se guarda su hash. Tras 5 intentos fallidos la cuenta se bloquea 15 minutos, y además hay un límite de 10 intentos por minuto y por IP. Los tiempos y límites se ajustan con variables de entorno (`app/core/config.py`).
 
+## Documentación de la API y CORS
+
+La API se documenta sola desde el código: `/docs` (Swagger), `/redoc` y `/openapi.json`. Cada operación tiene resumen, descripción con el permiso que exige y sus respuestas de error, y las pruebas fallan si alguna queda sin documentar. Para llamar a rutas protegidas en Swagger, use *Authorize* con el token de acceso.
+
+El navegador solo puede llamar a la API desde los orígenes de `CORS_ORIGINS` (por defecto `http://localhost:3000`, separados por comas; no se admite `*`). Sin orígenes configurados no se habilita CORS. Los tokens van en el encabezado `Authorization`, no en cookies, así que CORS no admite credenciales.
+
 ## Datos personales cifrados
 
 La base **no está cifrada completa**: Directus trae un SQLite sin SQLCipher (sqlite3 5.1.7 sobre SQLite 3.44.2, sin códec; se comprobó con `PRAGMA cipher_version`, que no devuelve nada), y con una clave configurada simplemente la ignoraría y no cifraría. Por eso se cifran a nivel de columna, desde la API, solo el RUT y el correo.

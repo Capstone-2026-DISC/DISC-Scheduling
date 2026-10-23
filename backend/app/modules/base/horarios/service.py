@@ -26,7 +26,8 @@ def routers() -> list[APIRouter]:
 
     repo = Repositorio(r.PROPUESTA)
 
-    @propuestas.post("/{propuesta_id}/aprobar", status_code=204)
+    @propuestas.post("/{propuesta_id}/aprobar", status_code=204, summary="Aprobar una propuesta de horario",
+                     description="Requiere `horarios.aprobar` en el departamento del periodo. La propuesta debe estar completa y sin violaciones de reglas duras; la aprobada anterior pasa a reemplazada. 403 si el permiso es de otro departamento.")
     def aprobar(propuesta_id: int, usuario: Usuario = Depends(requiere("horarios.aprobar")),
                 conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
         depto = repo.departamento_de(conn, propuesta_id)

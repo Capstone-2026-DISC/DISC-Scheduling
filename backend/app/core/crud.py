@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, create_model
 
 from . import audit
 from .deps import Usuario, get_conn, get_ip, requiere
+from .openapi import ERRORES_ESCRITURA, RESPUESTAS
 from .recurso import Recurso, Repositorio, traducir_error
 
 
@@ -23,7 +24,8 @@ def crear_router(recurso: Recurso, *, ruta: str, etiqueta: str, ver: str, editar
     """depto_payload = (campo del cuerpo, SQL que devuelve el departamento dado ese valor); por defecto se usa
     el campo departamento_id del cuerpo (o el DISC, id 1, si no viene)."""
     repo = Repositorio(recurso)
-    router = APIRouter(prefix=f"/{ruta}", tags=[etiqueta])
+    router = APIRouter(prefix=f"/{ruta}", tags=[etiqueta], responses={**RESPUESTAS, **ERRORES_ESCRITURA})
+    alcance = "solo de los departamentos donde el usuario tiene el permiso" if recurso.depto is not None else "sin alcance por departamento"
 
     def denegar(conn, usuario, ip, operacion, clave, depto):
         audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="acceso_denegado", resultado="denegado",
@@ -41,17 +43,20 @@ def crear_router(recurso: Recurso, *, ruta: str, etiqueta: str, ver: str, editar
             return None if fila is None else fila[0]
         return datos.get("departamento_id", 1)
 
-    @router.get("")
+    @router.get("", summary=f"Listar {ruta}", description=f"Requiere `{ver}`. Devuelve filas {alcance}"
+                f"{', sin las eliminadas' if recurso.borrado_logico else ''}. Paginado con `limite` (hasta 500) y `desplazamiento`.")
     def listar(limite: int = Query(100, ge=1, le=500), desplazamiento: int = Query(0, ge=0),
                usuario: Usuario = Depends(requiere(ver)), conn: sqlite3.Connection = Depends(get_conn)):
         return repo.listar(conn, usuario, usuario.departamentos(ver), None, limite, desplazamiento)
 
-    @router.get("/{clave}")
+    @router.get("/{clave}", summary=f"Ver un registro de {ruta}", description=f"Requiere `{ver}`. 404 si no existe, fue eliminado o es de un departamento sin acceso.")
     def leer(clave: int, usuario: Usuario = Depends(requiere(ver)), conn: sqlite3.Connection = Depends(get_conn)):
         return repo.obtener(conn, usuario, usuario.departamentos(ver), clave)
 
     if permite_crear:
-        @router.post("", status_code=201)
+        @router.post("", status_code=201, summary=f"Crear un registro en {ruta}",
+                     description=f"Requiere `{editar}` en el departamento del registro (el DISC si no se indica otro). Devuelve el `id`. "
+                                 "Solo se envían los campos que se quieren fijar; el resto toma el valor por defecto de la base.")
         def crear(datos: entrada, usuario: Usuario = Depends(requiere(editar)),  # type: ignore[valid-type]
                   conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
             cuerpo = datos.model_dump(exclude_unset=True)
@@ -63,7 +68,9 @@ def crear_router(recurso: Recurso, *, ruta: str, etiqueta: str, ver: str, editar
             except sqlite3.Error as exc:
                 raise traducir_error(exc) from exc
 
-    @router.patch("/{clave}", status_code=204)
+    @router.patch("/{clave}", status_code=204, summary=f"Modificar un registro de {ruta}",
+                  description=f"Requiere `{editar}` en el departamento del registro. Cambia solo los campos enviados. "
+                              "Los intentos sin permiso quedan en la auditoría.")
     def actualizar(clave: int, datos: parcial, usuario: Usuario = Depends(requiere(editar)),  # type: ignore[valid-type]
                    conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
         cuerpo = datos.model_dump(exclude_unset=True)
@@ -83,7 +90,8 @@ def crear_router(recurso: Recurso, *, ruta: str, etiqueta: str, ver: str, editar
         return Response(status_code=204)
 
     if recurso.borrado_logico:
-        @router.delete("/{clave}", status_code=204)
+        @router.delete("/{clave}", status_code=204, summary=f"Eliminar un registro de {ruta}",
+                       description=f"Requiere `{editar}`. **Borrado lógico**: la fila se marca como eliminada y deja de aparecer; no se borra de la base.")
         def eliminar(clave: int, usuario: Usuario = Depends(requiere(editar)),
                      conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
             actual = repo.departamento_de(conn, clave)

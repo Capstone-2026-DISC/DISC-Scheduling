@@ -12,22 +12,28 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ...core import audit
 from ...core.db import escritura
 from ...core.deps import Usuario, get_cifrador, get_conn, get_ip, usuario_actual
+from ...core.openapi import ERRORES_ESCRITURA, RESPUESTAS
 from ...core.recurso import traducir_error
 from ...importacion.spec import ORDEN_DE_CARGA, PLANTILLAS
 from ...importacion.validar import validar
 
-router = APIRouter(prefix="/importaciones", tags=["importación"])
+router = APIRouter(prefix="/importaciones", tags=["importación"], responses={**RESPUESTAS, **ERRORES_ESCRITURA})
 LIMITE_BYTES = 5_000_000
 
 
-@router.get("/plantillas")
+@router.get("/plantillas", summary="Plantillas que el usuario puede cargar", description="Solo requiere sesión iniciada: lista las colecciones que el usuario puede cargar según sus permisos (`catalogo.importar` o `finanzas.editar`), con sus columnas y las colecciones que deben cargarse antes.")
 def plantillas(usuario: Usuario = Depends(usuario_actual)):
     return [{"coleccion": c, "descripcion": PLANTILLAS[c].descripcion, "permiso": PLANTILLAS[c].permiso_edicion,
              "depende_de": list(PLANTILLAS[c].dependencias), "columnas": [x.nombre for x in PLANTILLAS[c].columnas]}
             for c in ORDEN_DE_CARGA if usuario.tiene(PLANTILLAS[c].permiso_edicion)]
 
 
-@router.post("/{coleccion}")
+@router.post("/{coleccion}", summary="Validar o cargar un CSV",
+             description="El cuerpo es el CSV en UTF-8 (`Content-Type: text/csv`), con los encabezados de la plantilla. Sin `confirmar` solo valida; "
+                         "con `confirmar=true` carga todas las filas o ninguna. La respuesta trae, por fila, la columna, qué falló y cómo corregirlo. "
+                         "El permiso depende de la colección (`catalogo.importar` o `finanzas.editar`) y se aplica por departamento. "
+                         "Cada importación queda registrada con usuario e IP.",
+             responses={413: {"description": "El archivo supera los 5 MB."}, 422: {"description": "No está en UTF-8."}})
 async def importar(coleccion: str, request: Request, confirmar: bool = False,
                    usuario: Usuario = Depends(usuario_actual), conn: sqlite3.Connection = Depends(get_conn),
                    ip: str | None = Depends(get_ip), cif=Depends(get_cifrador)):
