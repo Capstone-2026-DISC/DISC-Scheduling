@@ -119,6 +119,25 @@ services:
       directus-satelites:
         condition: service_healthy
     restart: "no"
+  # Ejemplo de módulo de Proyecto Integrador. Es opcional: docker compose --profile demo up --build
+  modulo-simulado:
+    profiles: ["demo"]
+    image: disc-scheduling-modulo-simulado:local
+    build: ejemplos/modulo_simulado
+    environment:
+      DIRECTUS_URL: http://directus-satelites:8055
+      DIRECTUS_TOKEN: ${SAT_TOKEN_G1:?Completa .env}
+      GRUPO: g1
+    ports:
+      - "127.0.0.1:${DEMO_PORT:-8090}:8000"
+    depends_on:
+      configurar:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/salud', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 volumes:
   plataforma_data:
   satelites_data:
