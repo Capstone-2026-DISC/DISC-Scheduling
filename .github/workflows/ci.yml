@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Instalar dependencias
         run: pip install -r backend/requirements-dev.txt
-      - name: Esquema de la base (generado al día y 41 pruebas)
+      - name: Esquema de la base (generado al día y sus pruebas)
         run: |
           python db/generar_esquema.py | diff - db/esquema_plataforma.sql
           python db/probar_esquema.py db/esquema_plataforma.sql | tail -1

@@ -31,9 +31,29 @@ Las claves de los usuarios semilla salen de `SEED_ADMIN_PASSWORD` y `SEED_TEST_P
 
 Las claves se guardan con argon2id y del refresh token solo se guarda su hash. Tras 5 intentos fallidos la cuenta se bloquea 15 minutos, y además hay un límite de 10 intentos por minuto y por IP. Los tiempos y límites se ajustan con variables de entorno (`app/core/config.py`).
 
+## Datos personales cifrados
+
+La base **no está cifrada completa**: Directus trae un SQLite sin SQLCipher (sqlite3 5.1.7 sobre SQLite 3.44.2, sin códec; se comprobó con `PRAGMA cipher_version`, que no devuelve nada), y con una clave configurada simplemente la ignoraría y no cifraría. Por eso se cifran a nivel de columna, desde la API, solo el RUT y el correo.
+
+| Dato | Dónde | Cómo se guarda |
+| --- | --- | --- |
+| RUT de una persona | `catalogo_persona.rut_cifrado` | AES-256-GCM con nonce aleatorio, formato `v1:<clave>:<datos>` |
+| Búsqueda y unicidad del RUT | `catalogo_persona.rut_indice` | HMAC-SHA256 del RUT normalizado con `INDEX_KEY`, distinta de las claves de cifrado |
+| Correo de una persona | `catalogo_persona.email_cifrado` | Igual que el RUT |
+| Correo de un envío de horario | `horarios_envio_horario.email_destino_cifrado` | Igual |
+| RUT y correo de las filas crudas de una importación | `plataforma_fila_importada.datos` | Cifrados columna por columna |
+
+- El RUT no es clave en ninguna tabla. Todas apuntan a `catalogo_persona.id`, y la unicidad la da el índice ciego.
+- Cada texto cifrado lleva su columna como dato autenticado, así que uno copiado a otra columna no se descifra. Un dato alterado se rechaza.
+- Los CHECK del esquema impiden guardar en claro: un RUT o correo sin el prefijo `v1:` no entra. La auditoría registra los cambios con el texto cifrado, nunca con el RUT.
+- El dígito verificador ya no se valida con triggers, porque la base solo ve texto cifrado. Lo validan la API y el importador, que explican cuál debería ser.
+- `DATA_KEYS` (`k1=...,k2=...`, con `DATA_KEY_ID` para la que cifra), e `INDEX_KEY` son claves de 32 bytes en base64 que genera `scripts/configure.py`. **Respáldelas aparte de la base: sin ellas los datos cifrados no se recuperan.** Para rotar, agregue la clave nueva, cambie `DATA_KEY_ID`, reinicie y ejecute `python -m app.rotar_claves`. Cambiar `INDEX_KEY` obliga a recalcular los índices.
+- Directus no recibe las claves ni las columnas cifradas, y la réplica de los satélites no copia datos personales.
+- Lo que **no** se cifra: el nombre de las personas, los correos de login de `identidad_usuario` (que Directus también guarda en `directus_users`), y el resto de la base. Para proteger el archivo completo hay que cifrar el volumen o el disco del servidor, y para el transporte poner un proxy con HTTPS delante.
+
 ## Auditoría
 
-Cada inicio de sesión, fallido o exitoso, cierre de sesión, cambio de clave, refresh reutilizado, acceso denegado y cambio de permisos queda en `plataforma_auditoria` con usuario, IP y fecha. Los cambios de datos los registran los triggers del esquema. La tabla es de solo inserción y se conserva 5 años. La vista `plataforma_v_cambios_sin_usuario` muestra cualquier cambio que no pasó por la API.
+Cada inicio de sesión, fallido o exitoso, cierre de sesión, cambio de clave, refresh reutilizado, acceso denegado y cambio de permisos queda en `plataforma_auditoria` con usuario, IP y fecha. Los cambios de datos los registran los triggers del esquema (con los datos personales ya cifrados). La tabla es de solo inserción y se conserva 5 años. La vista `plataforma_v_cambios_sin_usuario` muestra cualquier cambio que no pasó por la API.
 
 ## Borrado lógico
 
