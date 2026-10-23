@@ -12,6 +12,7 @@ docker compose logs configurar          # roles, permisos y verificaciones de Di
 
 | Servicio | Puerto | Qué es |
 | --- | --- | --- |
+| `frontend` | 3000 | Interfaz web (Next.js). Hoy trae la pantalla de inicio de sesión |
 | `api` | 8000 | FastAPI. Crea la base desde el esquema si no existe y siembra los usuarios iniciales |
 | `directus` | 8055 | Directus sobre `plataforma.db`, solo lectura del núcleo |
 | `directus-satelites` | 8056 | Directus sobre `satelites.db`, para los grupos de Proyecto Integrador |

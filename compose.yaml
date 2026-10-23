@@ -43,6 +43,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+  # Interfaz web (Next.js). Habla con la API desde su propio servidor, por la red interna de Docker.
+  frontend:
+    image: disc-scheduling-frontend:local
+    build: frontend
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 20
   # Directus del núcleo: sobre el mismo archivo SQLite que la API; las colecciones del núcleo son de solo lectura.
   directus:
     <<: *directus

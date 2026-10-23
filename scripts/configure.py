@@ -30,6 +30,7 @@ values = {
     "MODULES": "base,financiero",
     "DIRECTUS_PORT": "8055",
     "API_PORT": "8000",
+    "FRONTEND_PORT": "3000",
     "SATELITES_PORT": "8056",
 }
 try:
