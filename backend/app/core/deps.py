@@ -16,6 +16,10 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def get_cifrador(request: Request):
+    return request.app.state.cifrador
+
+
 def get_conn(settings: Settings = Depends(get_settings)):
     conn = conectar(settings.db_path)
     try:

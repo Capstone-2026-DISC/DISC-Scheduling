@@ -13,6 +13,9 @@ class Settings:
     esquema_path: str = field(default_factory=lambda: os.environ.get("SCHEMA_PATH", "/app/db/esquema_plataforma.sql"))
     jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", ""))
     jwt_issuer: str = "disc-scheduling"
+    data_keys: str = field(default_factory=lambda: os.environ.get("DATA_KEYS", ""))          # k1=<base64 de 32 bytes>,k2=...
+    data_key_id: str = field(default_factory=lambda: os.environ.get("DATA_KEY_ID", "k1"))     # la que cifra de ahora en adelante
+    index_key: str = field(default_factory=lambda: os.environ.get("INDEX_KEY", ""))           # HMAC del RUT; distinta de las anteriores
     access_minutos: int = field(default_factory=lambda: _entero("ACCESS_TOKEN_MINUTES", 10))
     refresh_dias: int = field(default_factory=lambda: _entero("REFRESH_TOKEN_DAYS", 7))
     intentos_maximos: int = field(default_factory=lambda: _entero("LOGIN_MAX_ATTEMPTS", 5))
@@ -26,6 +29,11 @@ class Settings:
     def validar(self) -> None:
         if len(self.jwt_secret) < 32:
             raise RuntimeError("JWT_SECRET debe tener al menos 32 caracteres (ver .env.example)")
+        self.cifrador()            # falla si faltan DATA_KEYS o INDEX_KEY, o no son de 32 bytes
+
+    def cifrador(self):
+        from .pii import Cifrador
+        return Cifrador.desde_entorno(self.data_keys, self.data_key_id, self.index_key)
 
 
 def get_settings() -> Settings:

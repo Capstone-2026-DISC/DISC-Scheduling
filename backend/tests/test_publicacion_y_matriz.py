@@ -5,13 +5,13 @@ from app import directus_matriz as m
 from app.core.db import conectar
 from app.publicacion import COPIAS, publicar
 
-from .conftest import cabecera
+from .conftest import cabecera, insertar_persona
 
 
-def sembrar_horario(db):
+def sembrar_horario(db, settings=None):
     db.execute("INSERT INTO catalogo_periodo (codigo) VALUES ('202620')")
     db.execute("INSERT INTO catalogo_asignatura (codigo, nombre) VALUES ('FAIC-00001', 'Asignatura de prueba')")
-    db.execute("INSERT INTO catalogo_persona (rut, nombre, email) VALUES ('12345678-5', 'Persona Ficticia', 'p@ejemplo.invalid')")
+    insertar_persona(db, settings, "12345678-5", "Persona Ficticia", "p@ejemplo.invalid")
     db.execute("INSERT INTO horarios_paralelo (periodo_id, asignatura_id, codigo) VALUES (1, 1, 'C1')")
     db.execute("INSERT INTO horarios_sesion (paralelo_id, numero) VALUES (1, 1)")
     db.execute("INSERT INTO horarios_corrida (periodo_id, perfil_id, semilla, estado, restricciones_usadas) "
@@ -22,8 +22,8 @@ def sembrar_horario(db):
     db.execute("UPDATE horarios_propuesta SET estado = 'aprobada' WHERE id = 2")
 
 
-def test_la_replica_solo_lleva_el_horario_aprobado_y_ningun_dato_personal(db, tmp_path):
-    sembrar_horario(db)
+def test_la_replica_solo_lleva_el_horario_aprobado_y_ningun_dato_personal(db, settings, tmp_path):
+    sembrar_horario(db, settings)
     ruta = str(tmp_path / "sat.db")
     cuentas = publicar(db, ruta)
     assert cuentas["pub_horario"] == 1
@@ -36,8 +36,8 @@ def test_la_replica_solo_lleva_el_horario_aprobado_y_ningun_dato_personal(db, tm
         assert prohibido not in volcado
 
 
-def test_publicar_es_repetible_y_reemplaza(db, tmp_path):
-    sembrar_horario(db)
+def test_publicar_es_repetible_y_reemplaza(db, settings, tmp_path):
+    sembrar_horario(db, settings)
     ruta = str(tmp_path / "sat.db")
     publicar(db, ruta)
     assert publicar(db, ruta) == publicar(db, ruta)

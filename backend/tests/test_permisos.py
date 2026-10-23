@@ -65,7 +65,7 @@ def test_administrador_gestiona_datos_personales_con_rut_validado(client, admin)
     ok = client.post("/personas", headers=admin, json={"rut": "12345678-5", "nombre": "Persona Ficticia"})
     assert ok.status_code == 201
     malo = client.post("/personas", headers=admin, json={"rut": "12345678-9", "nombre": "Otra Ficticia"})
-    assert malo.status_code == 409 and "RUT" in malo.json()["detail"]
+    assert malo.status_code == 422 and "RUT" in malo.json()["detail"] and "K" not in malo.json()["detail"][:3]
 
 
 def test_un_departamento_no_edita_los_horarios_de_otro(client, dos_departamentos, db):

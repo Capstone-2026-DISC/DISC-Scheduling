@@ -28,6 +28,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="DISC Scheduling")
     app.state.settings = settings
+    app.state.cifrador = settings.cifrador()
     app.state.limite_login = LimiteTasa(settings.login_por_minuto_ip)
     for modulo in modulos:
         app.include_router(modulo.router)

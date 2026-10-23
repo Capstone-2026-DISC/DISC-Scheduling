@@ -44,7 +44,10 @@ ESCRITURA_POR_API = {
     "departamentos.gestionar": "gestión de departamentos",
 }
 # columnas que nunca se exponen por Directus
-OCULTAS = {"identidad_usuario": {"hash_clave", "intentos_fallidos", "bloqueado_hasta"}}
+OCULTAS = {"identidad_usuario": {"hash_clave", "intentos_fallidos", "bloqueado_hasta"},
+           # el RUT y el correo van cifrados y Directus no tiene las claves: ni siquiera se exponen los textos cifrados
+           "catalogo_persona": {"rut_cifrado", "rut_indice", "email_cifrado"},
+           "horarios_envio_horario": {"email_destino_cifrado"}}
 # tablas que ningún rol lee
 SIN_ACCESO = {"identidad_sesion", "plataforma_contexto"}
 # este permiso levanta el filtro por departamento (lee los de todos)
