@@ -11,7 +11,7 @@
 | `catalogo_asignatura` | 12 | Asignaturas de prueba con códigos `FAIC-00101` a `FAIC-00112` |
 | `catalogo_plan_nivel` | 18 | Reparto de asignaturas en programas y niveles |
 | `catalogo_sala` | 10 | 4 laboratorios del esquema más 6 salas de prueba |
-| `catalogo_persona` | 20 | Nombres inventados, RUT ficticio y correo `@ejemplo.invalid` |
+| `catalogo_persona` | 20 | Nombres inventados, RUT ficticio y correo `@ejemplo.invalid`. En la base van cifrados; el CSV los trae en claro porque tiene el formato de la plantilla de importación |
 | `catalogo_docente` | 14 | 6 de planta y 8 por hora |
 | `catalogo_ayudante` | 6 | Ayudantes |
 | `horarios_paralelo` | 15 | Oferta del periodo 202620 con NRC ficticios |
@@ -36,6 +36,10 @@ python3 -m pytest datos_prueba/test_datos.py -q
 ## RUT ficticios
 
 Cada RUT tiene un dígito verificador válido, porque el esquema lo exige con un trigger. El cuerpo se elige entre **59.000.000 y 59.999.999**. Los RUT de personas naturales chilenas están por debajo de 50.000.000, así que este rango no debería corresponder a una persona. No se garantiza que no coincida con el RUT de alguna empresa u organización real. Las pruebas comprueban que ningún RUT generado salga de ese rango.
+
+## Cifrado de la base de prueba
+
+En la base real el RUT y el correo se guardan cifrados (ver `docs/backend.md`), y la base de prueba también, para que tenga la misma forma. Las claves de cifrado de estos datos están en `generar_datos.py` y son **públicas a propósito**: no protegen nada y no se usan nunca con datos reales, cuyas claves salen del `.env`. Para abrir esta base con la API, configure `DATA_KEYS` e `INDEX_KEY` con esos valores. Para que los archivos salgan idénticos con la misma semilla, aquí el nonce se deriva del dato; en producción es aleatorio por valor.
 
 ## Cuidados
 

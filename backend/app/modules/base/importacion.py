@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...core import audit
 from ...core.db import escritura
-from ...core.deps import Usuario, get_conn, get_ip, usuario_actual
+from ...core.deps import Usuario, get_cifrador, get_conn, get_ip, usuario_actual
 from ...core.recurso import traducir_error
 from ...importacion.spec import ORDEN_DE_CARGA, PLANTILLAS
 from ...importacion.validar import validar
@@ -30,7 +30,7 @@ def plantillas(usuario: Usuario = Depends(usuario_actual)):
 @router.post("/{coleccion}")
 async def importar(coleccion: str, request: Request, confirmar: bool = False,
                    usuario: Usuario = Depends(usuario_actual), conn: sqlite3.Connection = Depends(get_conn),
-                   ip: str | None = Depends(get_ip)):
+                   ip: str | None = Depends(get_ip), cif=Depends(get_cifrador)):
     plantilla = PLANTILLAS.get(coleccion)
     if plantilla is None:
         raise HTTPException(404, "No hay plantilla para esa colección")
@@ -45,7 +45,7 @@ async def importar(coleccion: str, request: Request, confirmar: bool = False,
         texto = cuerpo.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(422, "El archivo debe estar en UTF-8. Guárdelo como CSV UTF-8 desde la planilla.") from None
-    informe = validar(plantilla, texto, conn)
+    informe = validar(plantilla, texto, conn, cif)
     # alcance por departamento: cada fila se carga solo donde el usuario tiene el permiso
     for f in informe["filas"]:
         depto = _departamento_de(conn, f["destino"])
@@ -66,8 +66,8 @@ async def importar(coleccion: str, request: Request, confirmar: bool = False,
                  hashlib.sha256(cuerpo).hexdigest(), estado, usuario.id)).lastrowid
             conn.executemany(
                 "INSERT INTO plataforma_fila_importada (importacion_id, numero_fila, datos, errores) VALUES (?, ?, ?, ?)",
-                [(imp_id, f["fila"], json.dumps(f["datos"], ensure_ascii=False), json.dumps(f["errores"], ensure_ascii=False))
-                 for f in informe["filas"]])
+                [(imp_id, f["fila"], json.dumps(_proteger(plantilla, f["datos"], cif), ensure_ascii=False),
+                  json.dumps(f["errores"], ensure_ascii=False)) for f in informe["filas"]])
             if confirmar and informe["ok"]:
                 for f in informe["filas"]:
                     columnas = {k: v for k, v in f["destino"].items() if v is not None and k != "-"}
@@ -82,6 +82,16 @@ async def importar(coleccion: str, request: Request, confirmar: bool = False,
     for f in informe["filas"]:
         f.pop("destino", None)
     return {"importacion_id": imp_id, "estado": estado, **informe}
+
+
+def _proteger(plantilla, datos: dict, cif) -> dict:
+    """La fila cruda se conserva para poder explicar errores, pero el RUT y el correo van cifrados."""
+    return {k: (cif.cifrar(str(v), f"plataforma_fila_importada.datos.{k}") if v is not None and _es_pii(plantilla, k) else v)
+            for k, v in datos.items()}
+
+
+def _es_pii(plantilla, nombre: str) -> bool:
+    return any(c.nombre == nombre and c.es_pii for c in plantilla.columnas)
 
 
 def _departamento_de(conn, destino: dict) -> int | None:

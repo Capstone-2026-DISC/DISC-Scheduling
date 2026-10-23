@@ -111,7 +111,7 @@ Clave de la fila: `rut`.
 
 | Columna | Tipo | Obligatoria | Regla | Ejemplo |
 | --- | --- | --- | --- | --- |
-| `rut` | RUT sin puntos con guion | sí | Sin puntos, con guion y dígito verificador válido. | 59999999-K |
+| `rut` | RUT sin puntos con guion | sí | Con dígito verificador válido; se acepta con o sin puntos. | 59999999-K |
 | `nombre` | texto | sí |  | Nombre Inventado Ejemplo |
 | `email` | texto | no | Correo con arroba. | nombre@ejemplo.invalid |
 

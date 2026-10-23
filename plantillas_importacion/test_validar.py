@@ -68,7 +68,14 @@ def test_referencias_y_duplicados_contra_la_base(tmp_path):
     assert ok["ok"]
     dup = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202620,,,\n", con)
     assert "Ya existe" in dup["filas"][0]["errores"][0]["falla"]
-    sin_dep = validar(PLANTILLAS["catalogo_docente"], "rut,departamento,tipo_contrato,activo\n59999999-K,,hora,1\n", con)
+    import base64
+    from app.core.pii import Cifrador
+    b64 = lambda b: base64.urlsafe_b64encode(b * 32).decode().rstrip("=")      # noqa: E731
+    cif = Cifrador.desde_entorno("k1=" + b64(b"A"), "k1", b64(b"B"))
+    docente = "rut,departamento,tipo_contrato,activo\n59999999-K,,hora,1\n"
+    # sin las claves no se puede ubicar a la persona: se revisa la forma y no se inventan errores
+    assert validar(PLANTILLAS["catalogo_docente"], docente, con)["ok"]
+    sin_dep = validar(PLANTILLAS["catalogo_docente"], docente, con, cif)
     assert "No hay una persona" in sin_dep["filas"][0]["errores"][0]["falla"] and "catalogo_persona" in sin_dep["filas"][0]["errores"][0]["como_corregir"]
     sin_periodo = validar(PLANTILLAS["horarios_sesion"], "periodo,departamento,nrc,numero,duracion_bloques\n209910,,1,1,1\n", con)
     assert "no existe" in sin_periodo["filas"][0]["errores"][0]["falla"]

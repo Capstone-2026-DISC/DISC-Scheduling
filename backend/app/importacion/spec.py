@@ -19,6 +19,11 @@ class Col:
     minimo: float | None = None
     maximo: float | None = None
 
+    @property
+    def es_pii(self) -> bool:
+        """Datos personales: no se repiten en los mensajes de error y se guardan cifrados en las filas crudas."""
+        return self.tipo == "rut" or self.nombre == "email"
+
 
 @dataclass(frozen=True)
 class Plantilla:
@@ -70,7 +75,7 @@ PLANTILLAS: dict[str, Plantilla] = {p.coleccion: p for p in (
         Col("administrada_por", "texto", False, "disc", "Quién administra la sala."), BOOL("activa", "1"),
     ), ("codigo",)),
     Plantilla("catalogo_persona", "Personas (datos personales: RUT y correo).", (
-        Col("rut", "rut", True, "59999999-K", "Sin puntos, con guion y dígito verificador válido."),
+        Col("rut", "rut", True, "59999999-K", "Con dígito verificador válido; se acepta con o sin puntos."),
         Col("nombre", "texto", True, "Nombre Inventado Ejemplo"), Col("email", "texto", False, "nombre@ejemplo.invalid", "Correo con arroba."),
     ), ("rut",), fuente="academicos"),
     Plantilla("catalogo_docente", "Docentes (la persona debe existir).", (

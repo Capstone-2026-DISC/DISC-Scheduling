@@ -23,10 +23,11 @@ def test_valida_sin_cargar_y_deja_la_importacion_lista(client, admin, db):
     assert fila["estado"] == "lista" and len(fila["archivo_sha256"]) == 64
 
 
-def test_confirmar_carga_y_queda_trazado(client, admin, db):
+def test_confirmar_carga_y_queda_trazado(client, admin, db, settings):
     r = subir(client, admin, "catalogo_persona", "rut,nombre,email\n59999999-K,Persona Ficticia Uno,uno@ejemplo.invalid\n", True)
     assert r.json()["estado"] == "confirmada"
-    assert db.execute("SELECT rut FROM catalogo_persona").fetchone()[0] == "59999999-K"
+    fila = db.execute("SELECT rut_cifrado FROM catalogo_persona").fetchone()
+    assert settings.cifrador().descifrar(fila[0], "catalogo_persona.rut") == "59999999-K"
     a = db.execute("SELECT usuario_id, ip FROM plataforma_auditoria WHERE accion = 'importacion'").fetchone()
     assert a["usuario_id"] == 1 and a["ip"] == "testclient"
     assert db.execute("SELECT count(*) FROM plataforma_fila_importada").fetchone()[0] == 1

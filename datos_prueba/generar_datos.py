@@ -7,15 +7,37 @@ exactamente los mismos archivos. Ver DATOS_DE_PRUEBA.md.
 Uso: python3 datos_prueba/generar_datos.py [--semilla N] [--db RUTA] [--csv CARPETA]
 """
 import argparse
+import base64
 import csv
+import hashlib
 import random
 import sqlite3
+import sys
 import unicodedata
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
+sys.path.insert(0, str(RAIZ.parent / "backend"))
+from app.core import pii  # noqa: E402
+
 ESQUEMA = RAIZ.parent / "db" / "esquema_plataforma.sql"
 SEMILLA_POR_DEFECTO = 20262026
+
+# Claves de cifrado SOLO para estos datos ficticios. Son públicas a propósito (están en el repositorio) y no protegen
+# nada: sirven para que la base de prueba tenga la misma forma cifrada que la real y para poder leerla en las pruebas.
+# Nunca se usan en un entorno con datos reales; esas claves salen del .env (scripts/configure.py).
+DATA_KEYS_PRUEBA = "k1=" + base64.urlsafe_b64encode(hashlib.sha256(b"disc-scheduling datos de prueba: cifrado").digest()).decode().rstrip("=")
+INDEX_KEY_PRUEBA = base64.urlsafe_b64encode(hashlib.sha256(b"disc-scheduling datos de prueba: indice").digest()).decode().rstrip("=")
+
+
+def cifrador_de_prueba() -> "pii.Cifrador":
+    return pii.Cifrador.desde_entorno(DATA_KEYS_PRUEBA, "k1", INDEX_KEY_PRUEBA)
+
+
+def nonce_fijo(columna: str, valor: str) -> bytes:
+    """Nonce derivado del dato, solo para que los datos de prueba salgan idénticos con la misma semilla.
+    En producción el nonce es aleatorio por valor."""
+    return hashlib.sha256(f"{columna}:{valor}".encode()).digest()[:12]
 
 # RUT ficticios: cuerpo de 8 dígitos entre 59.000.000 y 59.999.999. Los RUT de personas naturales chilenas están por
 # debajo de 50.000.000 (los extranjeros con RUT provisorio usan otro formato), así que este rango no debería
@@ -102,9 +124,12 @@ def cargar(con: sqlite3.Connection, g: Generador) -> dict:
            (f"ZZ-{100 + i}", f"Sala de prueba {i}", r.choice([20, 30, 40, 50, 60]), 1 if i <= 2 else 0))
 
     # personas: 14 docentes (6 de planta, 8 por hora) y 6 ayudantes
+    cif = cifrador_de_prueba()
     for n in range(20):
         rut, nombre, correo = g.persona()
-        pid = ex("INSERT INTO catalogo_persona (rut, nombre, email) VALUES (?, ?, ?)", (rut, nombre, correo)).lastrowid
+        pid = ex("INSERT INTO catalogo_persona (rut_cifrado, rut_indice, nombre, email_cifrado) VALUES (?, ?, ?, ?)",
+                 (cif.cifrar(rut, pii.COL_RUT, nonce_fijo(pii.COL_RUT, rut)), cif.indice_rut(rut), nombre,
+                  cif.cifrar(correo, pii.COL_EMAIL, nonce_fijo(pii.COL_EMAIL, correo)))).lastrowid
         if n < 14:
             ex("INSERT INTO catalogo_docente (persona_id, tipo_contrato) VALUES (?, ?)", (pid, "planta" if n < 6 else "hora"))
         else:
@@ -153,9 +178,21 @@ def cargar(con: sqlite3.Connection, g: Generador) -> dict:
     return {t: ex(f"SELECT count(*) FROM {t}").fetchone()[0] for t in TABLAS_CSV}
 
 
+def exportar_personas(con: sqlite3.Connection, carpeta: Path) -> None:
+    """catalogo_persona se exporta en el formato de la plantilla de importación (rut, nombre, email en claro y ficticios),
+    no como la tabla, que solo tiene texto cifrado."""
+    cif = cifrador_de_prueba()
+    with open(carpeta / "catalogo_persona.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(["rut", "nombre", "email"])
+        for fila in con.execute("SELECT rut_cifrado, nombre, email_cifrado FROM catalogo_persona ORDER BY id"):
+            w.writerow([cif.descifrar(fila[0], pii.COL_RUT), fila[1], cif.descifrar(fila[2], pii.COL_EMAIL) if fila[2] else ""])
+
+
 def exportar_csv(con: sqlite3.Connection, carpeta: Path) -> None:
     carpeta.mkdir(parents=True, exist_ok=True)
-    for tabla in TABLAS_CSV:
+    exportar_personas(con, carpeta)
+    for tabla in (t for t in TABLAS_CSV if t != "catalogo_persona"):
         cursor = con.execute(f"SELECT * FROM {tabla} ORDER BY 1")
         with open(carpeta / f"{tabla}.csv", "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f, lineterminator="\n")

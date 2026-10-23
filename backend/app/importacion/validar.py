@@ -6,6 +6,7 @@ import re
 import sqlite3
 from datetime import date
 
+from ..core.pii import normalizar_rut
 from .spec import PLANTILLAS, REF_DESTINO, Col, Plantilla
 
 PERIODO_RE = re.compile(r"^\d{4}(10|20)$")
@@ -71,9 +72,9 @@ def _celda(col: Col, valor: str):
                 raise ValueError("el código es cuatro letras mayúsculas, guion y cinco dígitos")
             return valor, None
         if t == "rut":
-            v = valor.upper()
+            v = normalizar_rut(valor)                        # acepta puntos, minúscula y la falta del guion
             if not RUT_RE.match(v):
-                raise ValueError("el RUT va sin puntos, con guion y dígito verificador")
+                raise ValueError("el RUT son siete u ocho dígitos, guion y dígito verificador")
             if dv_rut(v.split("-")[0]) != v[-1]:
                 raise ValueError(f"el dígito verificador no corresponde (debería ser {dv_rut(v.split('-')[0])})")
             return v, None
@@ -83,7 +84,8 @@ def _celda(col: Col, valor: str):
     except ValueError as e:
         ejemplo = f" Ejemplo: {col.ejemplo}." if col.ejemplo else ""
         permitidos = f" Valores permitidos: {', '.join(col.valores)}." if col.valores else ""
-        return None, error(col.nombre, f"Valor «{valor}» inválido: {e}.", f"Corrija «{col.nombre}».{permitidos}{ejemplo}")
+        visto = "" if col.es_pii else f" «{valor}»"           # un dato personal no se repite en el informe
+        return None, error(col.nombre, f"Valor{visto} inválido: {e}.", f"Corrija «{col.nombre}».{permitidos}{ejemplo}")
 
 
 def _buscar(con, sql: str, *args):
@@ -91,8 +93,10 @@ def _buscar(con, sql: str, *args):
     return None if fila is None else fila[0]
 
 
-def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict) -> tuple[dict, list[dict]]:
-    """Traduce claves naturales a ids. Devuelve las columnas de la base y los errores de referencia."""
+def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict, cif=None) -> tuple[dict, list[dict]]:
+    """Traduce claves naturales a ids. Devuelve las columnas de la base y los errores de referencia.
+    `cif` (core.pii.Cifrador) cifra el RUT y el correo y permite buscar personas por su índice ciego; sin él no se
+    puede comprobar ni cargar nada que dependa de una persona."""
     destino, errores = {}, []
     dept = None
     dcol = next((c for c in plantilla.columnas if c.ref == "departamento"), None)
@@ -105,6 +109,8 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict) -> tupl
         valor = datos.get(col.nombre)
         dest = col.destino or REF_DESTINO.get(col.ref or "", col.nombre)
         if col.ref is None:
+            if plantilla.coleccion == "catalogo_persona" and col.nombre in ("rut", "email"):
+                continue                                   # se cifran más abajo
             if dest != "-" and valor is not None:
                 destino[dest] = valor
             continue
@@ -122,7 +128,9 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict) -> tupl
         if valor is None:
             continue
         if col.ref == "persona_rut":
-            pid = _buscar(con, "SELECT id FROM catalogo_persona WHERE rut = ? AND eliminado_en IS NULL", valor)
+            if cif is None:
+                continue                                   # sin las claves no se puede ubicar a la persona
+            pid = _buscar(con, "SELECT id FROM catalogo_persona WHERE rut_indice = ? AND eliminado_en IS NULL", cif.indice_rut(valor))
             if pid is None:
                 errores.append(error(col.nombre, f"No hay una persona con RUT {valor}.", "Cargue primero la plantilla catalogo_persona, o corrija el RUT."))
             elif dest == "docente_id" and _buscar(con, "SELECT 1 FROM catalogo_docente WHERE persona_id = ?", pid) is None:
@@ -148,10 +156,17 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict) -> tupl
                 errores.append(error("letra", f"No existe la categoría {valor} letra «{letra}».", "Use una letra de categoría existente (A a D para profesor_hora, A a C para ayudante)."))
             else:
                 destino[dest] = cid
+    if cif is not None and plantilla.coleccion == "catalogo_persona":
+        from ..core import pii
+        if datos.get("rut"):
+            destino["rut_cifrado"] = cif.cifrar(pii.normalizar_rut(datos["rut"]), pii.COL_RUT)
+            destino["rut_indice"] = cif.indice_rut(datos["rut"])
+        if datos.get("email"):
+            destino["email_cifrado"] = cif.cifrar(datos["email"], pii.COL_EMAIL)
     return destino, errores
 
 
-def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = None) -> dict:
+def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = None, cif=None) -> dict:
     """Informe: {ok, encabezados, filas: [{fila, datos, destino, errores}], resumen}. Con `con` se comprueban referencias
     y duplicados contra la base; sin ella solo la forma de cada celda."""
     encabezados, filas = leer_csv(texto)
@@ -176,12 +191,19 @@ def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = N
                     errores.append(err)
         destino = {}
         if con is not None and not errores:
-            destino, e_ref = resolver(con, plantilla, datos)
+            destino, e_ref = resolver(con, plantilla, datos, cif)
             errores += e_ref
-            if not e_ref:
-                clave_db = {c.destino or REF_DESTINO.get(c.ref or "", c.nombre): destino.get(c.destino or REF_DESTINO.get(c.ref or "", c.nombre))
-                            for c in plantilla.columnas if c.nombre in plantilla.clave and (c.destino or "") != "-"}
-                clave_db = {k: v for k, v in clave_db.items() if k != "-" and k in destino}
+            # la clave de una persona es su índice ciego; sin las claves esa comprobación no se puede hacer
+            comprobable = cif is not None or not any(c.es_pii for c in plantilla.columnas if c.nombre in plantilla.clave)
+            if not e_ref and comprobable:
+                clave_db = {}
+                for c in plantilla.columnas:
+                    if c.nombre not in plantilla.clave or (c.destino or "") == "-":
+                        continue
+                    dest = "rut_indice" if plantilla.coleccion == "catalogo_persona" and c.nombre == "rut" else (
+                        c.destino or REF_DESTINO.get(c.ref or "", c.nombre))
+                    if dest in destino:
+                        clave_db[dest] = destino[dest]
                 if clave_db and con.execute(f"SELECT 1 FROM {plantilla.tabla_db} WHERE " + " AND ".join(f"{k} IS ?" for k in clave_db),
                                             list(clave_db.values())).fetchone():
                     errores.append(error(",".join(plantilla.clave), "Ya existe una fila con esa clave en la base.",
