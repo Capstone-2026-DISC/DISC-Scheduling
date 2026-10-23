@@ -44,7 +44,6 @@ export default function LoginForm() {
       password.length > 0 &&
       regex.test(email);
     setBlockedLogin(!active);
-    console.log("login form active", { email, password, active });
   }, [email, password]);
 
   return (
