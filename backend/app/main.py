@@ -4,10 +4,12 @@ import sqlite3
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import registry
 from .core.config import Settings, get_settings
 from .core.db import conectar, crear_si_falta
+from .core.openapi import DESCRIPCION, ETIQUETAS
 from .core.ratelimit import LimiteTasa
 
 
@@ -26,14 +28,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     crear_si_falta(settings.db_path, settings.esquema_path)
     modulos = registry.cargar(settings.modulos)
 
-    app = FastAPI(title="DISC Scheduling")
+    app = FastAPI(title="DISC Scheduling", version="0.1.0", description=DESCRIPCION, openapi_tags=ETIQUETAS)
+    if settings.cors_origenes:       # sin orígenes configurados no se habilita CORS (la API solo responde a su propio origen)
+        app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origenes), allow_credentials=False,
+                           allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+                           allow_headers=["Authorization", "Content-Type", "X-Archivo"], max_age=600)
     app.state.settings = settings
     app.state.cifrador = settings.cifrador()
     app.state.limite_login = LimiteTasa(settings.login_por_minuto_ip)
     for modulo in modulos:
         app.include_router(modulo.router)
 
-    @app.get("/health")
+    @app.get("/health", tags=["estado"], summary="Estado del servicio",
+             description="Público. Indica si la base de datos y Directus responden y qué módulos están activos. "
+                         "Sirve para sondas de disponibilidad; no requiere token.")
     def health():
         try:
             conn = conectar(settings.db_path)

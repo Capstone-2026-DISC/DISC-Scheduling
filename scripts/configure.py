@@ -26,6 +26,7 @@ values = {
     "SAT_TOKEN_G2": secrets.token_urlsafe(36),
     "SAT_TOKEN_G3": secrets.token_urlsafe(36),
     "SAT_TOKEN_G4": secrets.token_urlsafe(36),
+    "CORS_ORIGINS": "http://localhost:3000",
     "MODULES": "base,financiero",
     "DIRECTUS_PORT": "8055",
     "API_PORT": "8000",

@@ -10,6 +10,7 @@ x-api-env: &api-env
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Completa .env}
   SEED_TEST_PASSWORD: ${SEED_TEST_PASSWORD:?Completa .env}
   MODULES: ${MODULES:-base,financiero}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
   DIRECTUS_URL: http://directus:8055
 x-directus: &directus
   image: docker.io/directus/directus:11.14.1
