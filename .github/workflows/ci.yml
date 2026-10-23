@@ -67,9 +67,14 @@ jobs:
           test "$code" = "0"
       - name: Probar el módulo de ejemplo contra Directus real
         run: |
-          set -x
           docker compose --profile demo up --build --wait --wait-timeout 300 --no-deps modulo-simulado
-          curl --silent --show-error http://127.0.0.1:8090/estado -o estado.json -w "estado: %{http_code}\n"
+          # Directus limita las peticiones por IP y Docker puede darle al módulo la IP que acaba de usar el configurador
+          # (que agota el límite a propósito). Se espera a que la ventana de un minuto termine.
+          for intento in $(seq 1 24); do
+            curl --silent --show-error http://127.0.0.1:8090/estado -o estado.json
+            grep -q '"conectado":true' estado.json && break
+            sleep 5
+          done
           cat estado.json; echo
           grep -q '"conectado":true' estado.json
           curl --fail --silent --show-error --output /dev/null -X POST http://127.0.0.1:8090/registro --data-urlencode "clave=ci"
