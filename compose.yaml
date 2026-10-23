@@ -1,39 +1,103 @@
 name: disc-scheduling
+x-api-env: &api-env
+  DB_PATH: /data/plataforma.db
+  SATELITES_DB_PATH: /satelites/satelites.db
+  SCHEMA_PATH: /app/db/esquema_plataforma.sql
+  JWT_SECRET: ${JWT_SECRET:?Completa .env}
+  SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Completa .env}
+  SEED_TEST_PASSWORD: ${SEED_TEST_PASSWORD:?Completa .env}
+  MODULES: ${MODULES:-base,financiero}
+  DIRECTUS_URL: http://directus:8055
+x-directus: &directus
+  image: docker.io/directus/directus:11.14.1
+  environment: &directus-env
+    WEBSOCKETS_ENABLED: "false"
+    TELEMETRY: "false"
+    # límite de peticiones por IP (aplica a quien llegue a Directus, incluidos los satélites)
+    RATE_LIMITER_ENABLED: "true"
+    RATE_LIMITER_STORE: memory
+    RATE_LIMITER_POINTS: "${RATE_LIMIT_POINTS:-60}"      # por IP y minuto; el núcleo lo sube abajo
+    RATE_LIMITER_DURATION: "60"
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8055/server/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+    interval: 5s
+    timeout: 5s
+    start_period: 60s
+    retries: 30
 services:
-  directus:
-    image: docker.io/directus/directus:11.14.1
-    environment:
-      SECRET: ${DIRECTUS_SECRET:?Completa .env}
-      DB_CLIENT: sqlite3
-      DB_FILENAME: /directus/database/data.db
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?Completa .env}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Completa .env}
-      WEBSOCKETS_ENABLED: "false"
-      TELEMETRY: "false"
-    ports:
-      - "127.0.0.1:${DIRECTUS_PORT:-8055}:8055"
-    volumes:
-      - directus_data:/directus/database
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8055/server/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 5s
-      timeout: 5s
-      start_period: 60s
-      retries: 30
   api:
     image: disc-scheduling-api:local
-    build: backend
-    environment:
-      DIRECTUS_URL: http://directus:8055
+    build: .
+    environment: *api-env
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
-    depends_on:
-      directus:
-        condition: service_healthy
+    volumes:
+      - plataforma_data:/data
+      - satelites_data:/satelites
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 20
+  # Directus del núcleo: sobre el mismo archivo SQLite que la API; las colecciones del núcleo son de solo lectura.
+  directus:
+    <<: *directus
+    environment:
+      <<: *directus-env
+      SECRET: ${DIRECTUS_SECRET:?Completa .env}
+      DB_CLIENT: sqlite3
+      DB_FILENAME: /data/plataforma.db
+      RATE_LIMITER_POINTS: "${RATE_LIMIT_POINTS_NUCLEO:-300}"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Completa .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Completa .env}
+    ports:
+      - "127.0.0.1:${DIRECTUS_PORT:-8055}:8055"
+    volumes:
+      - plataforma_data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+  # Directus de los satélites: archivo SQLite aparte con la réplica pub_* y las tablas sat_<grupo>_*
+  directus-satelites:
+    <<: *directus
+    environment:
+      <<: *directus-env
+      SECRET: ${SAT_DIRECTUS_SECRET:?Completa .env}
+      DB_CLIENT: sqlite3
+      DB_FILENAME: /satelites/satelites.db
+      ADMIN_EMAIL: ${SAT_ADMIN_EMAIL:?Completa .env}
+      ADMIN_PASSWORD: ${SAT_ADMIN_PASSWORD:?Completa .env}
+    ports:
+      - "127.0.0.1:${SATELITES_PORT:-8056}:8055"
+    volumes:
+      - satelites_data:/satelites
+    depends_on:
+      api:
+        condition: service_healthy
+  # Una sola vez: publica la réplica, configura roles y permisos de ambas instancias y los verifica
+  configurar:
+    image: disc-scheduling-api:local
+    command: ["sh", "-c", "python -m app.publicacion && python -m app.directus_setup nucleo && python -m app.directus_setup satelites && python -m app.directus_setup verificar"]
+    environment:
+      <<: *api-env
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Completa .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Completa .env}
+      SATELITES_URL: http://directus-satelites:8055
+      SAT_ADMIN_EMAIL: ${SAT_ADMIN_EMAIL:?Completa .env}
+      SAT_ADMIN_PASSWORD: ${SAT_ADMIN_PASSWORD:?Completa .env}
+      SAT_TOKEN_G1: ${SAT_TOKEN_G1:?Completa .env}
+      SAT_TOKEN_G2: ${SAT_TOKEN_G2:?Completa .env}
+      SAT_TOKEN_G3: ${SAT_TOKEN_G3:?Completa .env}
+      SAT_TOKEN_G4: ${SAT_TOKEN_G4:?Completa .env}
+    volumes:
+      - plataforma_data:/data:ro
+      - satelites_data:/satelites
+    depends_on:
+      directus:
+        condition: service_healthy
+      directus-satelites:
+        condition: service_healthy
+    restart: "no"
 volumes:
-  directus_data:
+  plataforma_data:
+  satelites_data:
