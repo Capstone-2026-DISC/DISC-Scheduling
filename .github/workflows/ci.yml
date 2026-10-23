@@ -43,13 +43,28 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Instalar dependencias
         run: pip install -r backend/requirements-dev.txt
-      - name: Pruebas
-        run: python -m pytest -q
+      - name: Esquema de la base (generado al día y 41 pruebas)
+        run: |
+          python db/generar_esquema.py | diff - db/esquema_plataforma.sql
+          python db/probar_esquema.py db/esquema_plataforma.sql | tail -1
+      - name: Pruebas de la API, los datos de prueba y las plantillas
+        run: python -m pytest -q tests ../datos_prueba/test_datos.py ../plantillas_importacion/test_validar.py
         working-directory: backend
+      - name: Datos y plantillas generados al día
+        run: |
+          python datos_prueba/generar_datos.py
+          python plantillas_importacion/generar_plantillas.py
+          git diff --exit-code -- datos_prueba/csv plantillas_importacion/csv plantillas_importacion/README.md
       - name: Preparar configuración local
         run: python scripts/configure.py
       - name: Levantar servicios
-        run: docker compose up --build --wait --wait-timeout 240
+        run: docker compose up --build --wait --wait-timeout 300
+      - name: Esperar la configuración de Directus y sus verificaciones
+        run: |
+          id=$(docker compose ps -a -q configurar)
+          code=$(timeout 600 docker wait "$id")
+          docker compose logs --no-color configurar | tail -50
+          test "$code" = "0"
       - name: Probar health
         run: |
           curl --fail --silent --show-error http://127.0.0.1:8000/health | tee health.json
@@ -73,7 +88,7 @@ jobs:
       - name: Construir y publicar imagen
         uses: docker/build-push-action@v6
         with:
-          context: backend
+          context: .
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
             ${{ steps.image.outputs.name }}:latest
