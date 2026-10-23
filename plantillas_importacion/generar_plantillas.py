@@ -5,6 +5,7 @@ la misma especificación que usa la validación, para que documento y reglas no 
 Uso: python3 plantillas_importacion/generar_plantillas.py"""
 import csv
 import sys
+from datetime import datetime
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
@@ -31,6 +32,9 @@ def escribir_csv(p) -> None:
 
 def escribir_xlsx(p) -> None:
     libro = openpyxl.Workbook()
+    libro.properties.creator = "nico-alvz"                  # sin marcas de herramientas en los metadatos
+    libro.properties.lastModifiedBy = "nico-alvz"
+    libro.properties.created = libro.properties.modified = datetime(2026, 10, 23)   # el archivo sale igual cada vez
     hoja = libro.active
     hoja.title = "datos"
     hoja.append([c.nombre for c in p.columnas])
