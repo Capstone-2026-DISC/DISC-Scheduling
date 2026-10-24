@@ -20,14 +20,14 @@ Cada semestre el Encargado Docente arma a mano la oferta académica del departam
 flowchart LR
     usuario(["Navegador"]) --> frontend["frontend, Next.js"]
     frontend -->|API_URL| api["api, FastAPI"]
-    api --- nucleo[("plataforma.db")]
-    nucleo --- directus["directus, solo lectura"]
-    api -->|publica pub_*| replica[("satelites.db")]
+    api -->|sesión de la persona| directus["directus, permisos y actividad"]
+    directus --- nucleo[("plataforma.db")]
+    api -.->|publica pub_*| replica[("satelites.db")]
     replica --- satelites["directus-satelites"]
     modulos["módulos de Proyecto Integrador"] -->|token del grupo| satelites
 ```
 
-Todo usa SQLite. La API es la única que escribe en el núcleo, y Directus lo expone solo para consulta. Los módulos de los grupos leen una réplica sin datos personales y guardan lo suyo en colecciones propias.
+Todo usa SQLite y Directus es la única puerta a los datos: la API le habla con la sesión de cada persona, y Directus aplica los permisos por rol y departamento y registra quién cambió qué. Los módulos de los grupos leen una réplica sin datos personales y guardan lo suyo en colecciones propias.
 
 ## Despliegue
 
@@ -41,13 +41,13 @@ docker compose up --build --wait
 docker compose logs configurar        # debe terminar con "verificación: todo correcto"
 ```
 
-El servicio `configurar` corre una vez, deja listos los roles de ambas instancias de Directus y comprueba los permisos. Si termina con error, el despliegue no está bien.
+Los servicios `migrar` y `configurar` corren una vez: el primero crea la base desde el esquema y el segundo deja listos los roles, permisos y usuarios de ambas instancias de Directus y comprueba los permisos. La API arranca cuando `configurar` terminó bien. Si termina con error, el despliegue no está bien.
 
 | Servicio | Puerto | Para qué |
 | --- | --- | --- |
 | `frontend` | 3000 | Interfaz web |
 | `api` | 8000 | API. Documentación interactiva en `/docs` |
-| `directus` | 8055 | Consulta del núcleo. Entra con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
+| `directus` | 8055 | Acceso a los datos del núcleo. Cuenta de emergencia con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
 | `directus-satelites` | 8056 | Acceso de los módulos de Proyecto Integrador |
 | `modulo-simulado` | 8090 | Módulo de ejemplo, solo con el perfil `demo` |
 
@@ -90,7 +90,7 @@ Para otro grupo se cambian `GRUPO`, `DIRECTUS_TOKEN` y `DIRECTUS_URL`. Detalles 
 | Login con JWT, renovación de sesión y bloqueo por intentos | Disponible |
 | API de catálogo, horarios, finanzas y usuarios, documentada en `/docs` | Disponible |
 | Importación de CSV con plantillas y errores explicados por fila | Disponible |
-| Directus de consulta y réplica para los módulos de los grupos | Disponible |
+| Directus como capa de acceso a los datos, y réplica para los módulos de los grupos | Disponible |
 | Frontend | Solo la pantalla de inicio de sesión, aún sin conectar a la API |
 | Generación de horarios con el motor de optimización | Pendiente de integrar |
 | Cálculo del costo docente contra el presupuesto | Pendiente |
@@ -103,9 +103,10 @@ cd backend
 pip install -r requirements-dev.txt
 python -m pytest -q tests ../datos_prueba/test_datos.py ../plantillas_importacion/test_validar.py ../ejemplos/modulo_simulado/test_modulo.py
 cd .. && python db/probar_esquema.py db/esquema_plataforma.sql
+cd backend && python -m pytest -q tests_integracion      # con el stack arriba (docker compose up)
 ```
 
-El CI repite esas pruebas, levanta todo con Docker Compose, comprueba los permisos reales de Directus, el frontend y el módulo de ejemplo, y construye las imágenes.
+El CI repite esas pruebas, levanta todo con Docker Compose, comprueba los permisos reales de Directus, corre las pruebas de integración, el frontend y el módulo de ejemplo, y construye las imágenes.
 
 ## Estructura
 
