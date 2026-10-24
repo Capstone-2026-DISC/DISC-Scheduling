@@ -1,0 +1,49 @@
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/wiki/**"
+      - "docs/matriz_permisos.md"
+      - ".github/workflows/wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    name: Publicar docs/wiki en la wiki del repositorio
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clonar la wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! git clone --quiet "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki; then
+            echo "La wiki no existe todavía. Cree su primera página desde la pestaña Wiki del repositorio y vuelva a ejecutar este workflow."
+            exit 1
+          fi
+      - name: Copiar las páginas
+        run: |
+          find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp docs/wiki/*.md wiki/
+          { echo "# Matriz de permisos"; echo; sed '1{/^# /d}' docs/matriz_permisos.md; } > wiki/Matriz-de-permisos.md
+          # los enlaces entre páginas llevan .md para verse bien en el repositorio; la wiki los quiere sin extensión
+          sed -i -E 's/\]\(([A-Za-z0-9_-]+)\.md\)/](\1)/g' wiki/*.md
+      - name: Publicar
+        working-directory: wiki
+        run: |
+          git config user.name "nico-alvz"
+          git config user.email "130405041+nico-alvz@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "La wiki ya está al día"; exit 0; fi
+          git commit -q -m "docs: sync the wiki with docs/wiki"
+          git push -q
