@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Claves ficticias de las verificaciones y de los datos de prueba"
+regexes = ['''Clave-Larga-Intruso-1x''']

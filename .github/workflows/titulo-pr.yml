@@ -1,0 +1,21 @@
+name: Título del pull request
+
+on:
+  pull_request:
+    branches: [main, test]
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  titulo:
+    name: Título con formato de commit convencional
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revisar el título
+        env:
+          TITULO: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITULO" | grep -Eq '^(feat|fix|docs|test|refactor|perf|style|build|ci|chore|revert)(\([a-z0-9-]+\))?!?: .+'; then
+            echo "El título debe seguir commits convencionales, por ejemplo: feat(api): add room listing"
+            echo "Título recibido: $TITULO"
+            exit 1
+          fi
