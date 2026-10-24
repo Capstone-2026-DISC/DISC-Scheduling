@@ -165,7 +165,7 @@ Hay una plantilla por colección en `plantillas_importacion/` (CSV y XLSX, con u
 | Lógica de la API | `backend/tests` | Un Directus simulado (`tests/falso.py`); no comprueba permisos |
 | Permisos, departamentos, borrado lógico, cifrado y auditoría | `backend/tests_integracion` | El stack real con `docker compose up` |
 | Datos de prueba, plantillas y módulo de ejemplo | `datos_prueba`, `plantillas_importacion`, `ejemplos/modulo_simulado` | Pytest |
-| Permisos de ambas instancias de Directus | `docker compose logs configurar` | El paso `verificar` del configurador |
+| Permisos reales de Directus | `docker compose logs configurar` | El paso `verificar` del configurador |
 
 ```bash
 cd backend

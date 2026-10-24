@@ -27,7 +27,7 @@ flowchart LR
 
 Todo usa SQLite y Directus es la única puerta a los datos: la API le habla con la sesión de cada persona, y los módulos de los grupos con el token de su grupo. Directus aplica los permisos por rol y departamento y registra quién cambió qué. Dentro de la misma base, cada grupo solo lee las tablas `pub_*` (una copia del catálogo y del horario aprobado, sin datos personales) y solo escribe en su propia tabla `sat_<grupo>_registro`. No ve nada del núcleo.
 
-La API no abre `plataforma.db`. Hasta regenerar la copia `pub_*` lo hace por Directus.
+La API no abre `plataforma.db`: incluso la copia `pub_*` la regenera por Directus.
 
 ## Despliegue
 
