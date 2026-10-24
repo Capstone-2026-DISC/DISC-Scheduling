@@ -25,7 +25,7 @@ ETIQUETAS = [
     {"name": "horarios", "description": "Paralelos, sesiones, restricciones y propuestas de horario."},
     {"name": "finanzas", "description": "Tarifas, presupuestos, escenarios y nombramientos."},
     {"name": "importación", "description": "Carga de datos desde CSV con las plantillas, con informe de errores por fila."},
-    {"name": "satélites", "description": "Publicación de la réplica de solo lectura para los módulos de Proyecto Integrador."},
+    {"name": "satélites", "description": "Publicación de la copia pub_* de solo lectura para los módulos de Proyecto Integrador."},
     {"name": "predictivo (esqueleto)", "description": "Módulo aún sin implementar."},
 ]
 

@@ -1,13 +1,12 @@
 """Configura Directus de forma repetible (idempotente) a partir del esquema y de los roles de la plataforma.
 
-  python -m app.directus_setup nucleo                       Directus del núcleo: colecciones, roles, política de la API y usuarios
-  python -m app.directus_setup satelites                    Directus de los satélites: un rol y un token por grupo
-  python -m app.directus_setup verificar                    Comprueba los permisos reales contra ambas instancias
+  python -m app.directus_setup nucleo                       Colecciones, roles, política de la API, usuarios y un rol con token por grupo satélite
+  python -m app.directus_setup verificar                    Comprueba los permisos reales contra Directus
   python -m app.directus_setup rol-permiso dar|quitar ROL PERMISO
                                                             Cambia un permiso lógico de un rol y regenera su política
 
 Variables: DIRECTUS_URL, ADMIN_EMAIL, ADMIN_PASSWORD (administrador de arranque de Directus); API_SERVICE_TOKEN;
-SEED_ADMIN_PASSWORD, SEED_TEST_PASSWORD; SATELITES_URL, SAT_ADMIN_EMAIL, SAT_ADMIN_PASSWORD, SAT_TOKEN_G1..G4;
+SEED_ADMIN_PASSWORD, SEED_TEST_PASSWORD; SAT_TOKEN_G1..G4;
 SCHEMA_PATH y DB_PATH (para proteger el registro de actividad). Ninguna clave se imprime ni se guarda.
 """
 import os
@@ -20,7 +19,7 @@ import httpx
 
 from . import directus_matriz as matriz
 
-GRUPOS = ("g1", "g2", "g3", "g4")
+GRUPOS = matriz.GRUPOS
 CARPETAS = {"identidad": "badge", "plataforma": "settings", "catalogo": "menu_book", "horarios": "calendar_month",
             "finanzas": "payments", "proyeccion": "trending_up"}
 PREFIJO = "disc_"
@@ -136,7 +135,7 @@ def roles_logicos(d: Directus) -> dict[str, set[str]]:
     for p in perms:
         if not p["revocado_en"] and p["rol"] in por_rol:
             por_rol[p["rol"]].add(p["permiso"])
-    por_rol.pop("modulo_satelite", None)       # los satélites entran por la otra instancia, con réplica de solo lectura
+    por_rol.pop("modulo_satelite", None)       # los módulos entran con un rol y un token por grupo (configurar_grupos)
     return por_rol
 
 
@@ -200,6 +199,7 @@ def configurar_nucleo() -> None:
         if not d.buscar("/items/identidad_usuario", "directus_id", uid):
             d.pedir("POST", "/items/identidad_usuario", json={"directus_id": uid, "email": email, "nombre": nombre})
         print(f"usuario {email} -> rol {rol}")
+    configurar_grupos(d)
     proteger_actividad()
 
 
@@ -223,38 +223,19 @@ def cambiar_rol_permiso(accion: str, rol: str, permiso: str) -> None:
     print(f"permiso {permiso} {'dado a' if accion == 'dar' else 'quitado de'} {rol}; política de Directus regenerada")
 
 
-def configurar_satelites() -> None:
-    d = Directus(os.environ.get("SATELITES_URL", "http://directus-satelites:8055"), os.environ["SAT_ADMIN_EMAIL"],
-                 os.environ["SAT_ADMIN_PASSWORD"])
-    ruta = os.environ.get("SATELITES_DB_PATH", "/satelites/satelites.db")
-    sat = sqlite3.connect(ruta, isolation_level=None, timeout=10)
-    sat.execute("PRAGMA busy_timeout = 5000")
-    pub = [r[0] for r in sat.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'pub_%'")]
-    for g in GRUPOS:     # una colección propia por grupo; con borrado lógico (sin permiso de DELETE)
-        sat.execute(f"CREATE TABLE IF NOT EXISTS sat_{g}_registro (id INTEGER PRIMARY KEY, clave TEXT NOT NULL, "
-                    "valor TEXT CHECK (valor IS NULL OR json_valid(valor)), "
-                    "creado_en TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), eliminado_en TEXT) STRICT")
-    sat.close()
-    d.pedir("POST", "/utils/cache/clear")
-    for t in pub + [f"sat_{g}_registro" for g in GRUPOS]:
-        d.pedir("PATCH", f"/collections/{t}", json={"meta": {"hidden": False}})
+def configurar_grupos(d: Directus) -> None:
+    """Un rol y un token estático por grupo de Proyecto Integrador, en este mismo Directus: leen pub_* y escriben solo en su
+    sat_<grupo>_registro. No son roles de la plataforma (sin prefijo disc_): la API no les deja iniciar sesión."""
     for g in GRUPOS:
         pol = d.politica(f"satelite_{g}", app_access=False)
-        permisos = [{"collection": t, "action": "read", "fields": ["*"], "permissions": {}} for t in pub]
-        propia = f"sat_{g}_registro"
-        permisos += [{"collection": propia, "action": "read", "fields": ["*"], "permissions": {"eliminado_en": {"_null": True}}},
-                     {"collection": propia, "action": "create", "fields": ["clave", "valor"], "permissions": {}, "validation": {}},
-                     {"collection": propia, "action": "update", "fields": ["clave", "valor", "eliminado_en"],
-                      "permissions": {"eliminado_en": {"_null": True}}, "validation": {}}]
-        d.reemplazar_permisos(pol, permisos)
+        d.reemplazar_permisos(pol, matriz.permisos_de_grupo(g))
         rol = d.rol(f"satelite_{g}", pol)
         token = os.environ.get(f"SAT_TOKEN_{g.upper()}")
         if not token:
             print(f"falta SAT_TOKEN_{g.upper()}: se omite el usuario del grupo")
             continue
         d.usuario(f"{g}@satelites.example.com", None, rol, token=token)
-        print(f"satélite {g}: lectura pub_* ({len(pub)}), escritura solo en {propia}")
-
+        print(f"grupo {g}: lectura pub_* ({len(matriz.PUBLICADAS) + 1}), escritura solo en sat_{g}_registro")
 
 
 # ---- verificación ------------------------------------------------------------------------------
@@ -342,22 +323,20 @@ def verificar() -> int:
         finally:
             con.close()
 
-    sat = os.environ.get("SATELITES_URL")
-    if sat and os.environ.get("SAT_TOKEN_G1") and os.environ.get("SAT_TOKEN_G2"):
+    # módulos de Proyecto Integrador: lo suyo y nada del núcleo
+    if os.environ.get("SAT_TOKEN_G1") and os.environ.get("SAT_TOKEN_G2"):
         g1, g2 = os.environ["SAT_TOKEN_G1"], os.environ["SAT_TOKEN_G2"]
-        esperar("g1 lee pub_sala", _intento(sat, g1, "GET", "/items/pub_sala"), (200,))
-        esperar("g1 NO escribe en pub_sala", _intento(sat, g1, "POST", "/items/pub_sala", json={"codigo": "X", "es_laboratorio": 0}), (403,))
-        esperar("g1 escribe en su colección", _intento(sat, g1, "POST", "/items/sat_g1_registro", json={"clave": "k", "valor": "{}"}), (200,))
-        esperar("g1 NO escribe en la de g2", _intento(sat, g1, "POST", "/items/sat_g2_registro", json={"clave": "k"}), (403,))
-        esperar("g1 NO lee la de g2", _intento(sat, g1, "GET", "/items/sat_g2_registro"), (403,))
-        esperar("g1 NO borra (borrado lógico)", _intento(sat, g1, "DELETE", "/items/sat_g1_registro/1"), (403,))
-        esperar("g1 NO lee usuarios ni roles", _intento(sat, g1, "GET", "/users"), (403,))
-        esperar("g1 NO ve el núcleo (no está en su instancia)", _intento(sat, g1, "GET", "/items/catalogo_persona"), (403, 404))
-        esperar("g2 con su token propio", _intento(sat, g2, "GET", "/items/sat_g2_registro"), (200,))
-        esperar("token inválido", _intento(sat, "token-falso", "GET", "/items/pub_sala"), (401, 403))
-        g4 = os.environ.get("SAT_TOKEN_G4", g1)
-        codigos = {_intento(sat, g4, "GET", "/items/pub_sala", reintentar=False) for _ in range(120)}
-        esperar("el límite de peticiones frena a un satélite que abusa", int(429 in codigos), (1,))
+        esperar("g1 lee pub_sala", _intento(base, g1, "GET", "/items/pub_sala"), (200,))
+        esperar("g1 NO escribe en pub_sala", _intento(base, g1, "POST", "/items/pub_sala", json={"codigo": "X", "es_laboratorio": 0}), (403,))
+        esperar("g1 escribe en su colección", _intento(base, g1, "POST", "/items/sat_g1_registro", json={"clave": "k", "valor": "{}"}), (200,))
+        esperar("g1 NO escribe en la de g2", _intento(base, g1, "POST", "/items/sat_g2_registro", json={"clave": "k"}), (403,))
+        esperar("g1 NO lee la de g2", _intento(base, g1, "GET", "/items/sat_g2_registro"), (403,))
+        esperar("g1 NO borra (borrado lógico)", _intento(base, g1, "DELETE", "/items/sat_g1_registro/1"), (403,))
+        esperar("g1 NO lee usuarios ni roles", _intento(base, g1, "GET", "/users"), (403,))
+        for coleccion in ("catalogo_persona", "catalogo_sala", "finanzas_tarifa", "plataforma_auditoria", "identidad_usuario", "directus_activity"):
+            esperar(f"g1 NO lee {coleccion} (núcleo)", _intento(base, g1, "GET", f"/items/{coleccion}"), (403,))
+        esperar("g2 con su token propio", _intento(base, g2, "GET", "/items/sat_g2_registro"), (200,))
+        esperar("token inválido", _intento(base, "token-falso", "GET", "/items/pub_sala"), (401, 403))
     print("verificación:", "con fallas" if errores else "todo correcto")
     return 1 if errores else 0
 
@@ -366,8 +345,6 @@ if __name__ == "__main__":
     accion = sys.argv[1] if len(sys.argv) > 1 else ""
     if accion == "nucleo":
         configurar_nucleo()
-    elif accion == "satelites":
-        configurar_satelites()
     elif accion == "verificar":
         sys.exit(verificar())
     elif accion == "rol-permiso" and len(sys.argv) == 5 and sys.argv[2] in ("dar", "quitar"):

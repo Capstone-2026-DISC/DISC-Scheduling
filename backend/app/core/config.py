@@ -11,7 +11,6 @@ def _entero(nombre: str, defecto: int) -> int:
 class Settings:
     directus_url: str = field(default_factory=lambda: os.environ.get("DIRECTUS_URL", "http://directus:8055"))
     servicio_token: str = field(default_factory=lambda: os.environ.get("API_SERVICE_TOKEN", ""))
-    satelites_db_path: str = field(default_factory=lambda: os.environ.get("SATELITES_DB_PATH", "/satelites/satelites.db"))
     data_keys: str = field(default_factory=lambda: os.environ.get("DATA_KEYS", ""))          # k1=<base64 de 32 bytes>,k2=...
     data_key_id: str = field(default_factory=lambda: os.environ.get("DATA_KEY_ID", "k1"))     # la que cifra de ahora en adelante
     index_key: str = field(default_factory=lambda: os.environ.get("INDEX_KEY", ""))           # HMAC del RUT; distinta de las anteriores

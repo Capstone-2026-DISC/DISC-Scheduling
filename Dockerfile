@@ -6,7 +6,7 @@ COPY backend/requirements.txt .
 # uid 1000 coincide con el usuario de Directus para que ambos escriban el mismo archivo SQLite
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --uid 1000 --create-home api \
-    && mkdir /data /satelites && chown api:api /data /satelites
+    && mkdir /data && chown api:api /data
 COPY backend/app ./app
 COPY db/esquema_plataforma.sql ./db/esquema_plataforma.sql
 USER api

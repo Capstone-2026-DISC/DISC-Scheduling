@@ -80,6 +80,8 @@ API_POR_PERMISO = {
 OCULTAS = {"horarios_envio_horario": {"email_destino_cifrado"}}
 # tablas que ningún rol toca
 SIN_ACCESO: set[str] = set()
+PUBLICADAS = ["pub_periodo", "pub_programa", "pub_asignatura", "pub_sala", "pub_paralelo", "pub_horario"]
+GRUPOS = ("g1", "g2", "g3", "g4")
 PERMISO_GLOBAL = "departamentos.ver_otros"       # este permiso levanta el filtro por departamento
 SOLO_SERVICIO_ESCRIBE = {"plataforma_auditoria"}  # lo escribe la cuenta de servicio de la API, no las personas
 VAR_DEPTO = "$CURRENT_USER.departamento_id"
@@ -218,7 +220,20 @@ def permisos_servicio(info: dict, roles_de_plataforma_ids: list[str]) -> list[di
             "catalogo_periodo", "catalogo_programa", "catalogo_asignatura", "catalogo_sala", "horarios_paralelo",
             "horarios_propuesta", "horarios_sesion", "horarios_asignacion"]
     p += [{"collection": t, "action": "read", "fields": ["*"], "permissions": {}} for t in leer]
+    # la copia que ven los satélites: la regenera la API y la cuenta de servicio es la única que puede escribirla
+    for t in PUBLICADAS + ["pub_estado"]:
+        p += [{"collection": t, "action": "create", "fields": ["*"]}, {"collection": t, "action": "delete", "permissions": {}}]
     return p
+
+
+def permisos_de_grupo(grupo: str) -> list[dict]:
+    """Un módulo de Proyecto Integrador: lee la copia pub_* y solo escribe en su propia colección, con borrado lógico."""
+    propia = f"sat_{grupo}_registro"
+    return ([{"collection": t, "action": "read", "fields": ["*"], "permissions": {}} for t in PUBLICADAS + ["pub_estado"]]
+            + [{"collection": propia, "action": "read", "fields": ["*"], "permissions": {"eliminado_en": {"_null": True}}},
+               {"collection": propia, "action": "create", "fields": ["clave", "valor"], "permissions": {}, "validation": {}},
+               {"collection": propia, "action": "update", "fields": ["clave", "valor", "eliminado_en"],
+                "permissions": {"eliminado_en": {"_null": True}}, "validation": {}}])
 
 
 def matriz(info: dict, roles: dict[str, set[str]]) -> list[dict]:
@@ -262,7 +277,7 @@ def documento(info: dict, roles: dict[str, set[str]]) -> str:
     out += ["## Cuentas especiales", "",
             "- **Servicio de la API** (`servicio_api`): crea y modifica usuarios (solo con roles de la plataforma, nunca el Administrator de Directus), mantiene el espejo `identidad_usuario`, escribe `plataforma_auditoria` y lee lo que se publica a los satélites. No borra nada ni toca políticas.",
             "- **Administrador de arranque de Directus**: cuenta de emergencia. Puede todo menos borrar de verdad, porque lo frenan los triggers del esquema.",
-            "- **Satélites** (`satelite_g1` a `g4`): viven en otra instancia y leen la réplica `pub_*`; ver `docs/backend.md`.", ""]
+            "- **Satélites** (`satelite_g1` a `g4`): usan este mismo Directus con un token propio: leen la copia `pub_*` y solo escriben en su `sat_<grupo>_registro`; ver `docs/backend.md`.", ""]
     return "\n".join(out)
 
 

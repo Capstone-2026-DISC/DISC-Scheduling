@@ -1,6 +1,6 @@
 """Módulo de ejemplo de Proyecto Integrador.
 
-Muestra cómo un grupo se conecta al sistema: habla SOLO con la instancia de Directus de los satélites, con el
+Muestra cómo un grupo se conecta al sistema: habla SOLO con Directus, con el
 token de su grupo. Lee el catálogo y el horario aprobado (tablas pub_*), guarda datos propios en su colección
 sat_<grupo>_registro y puede comprobar en vivo lo que no puede hacer. No usa el login ni los tokens del core.
 
@@ -20,7 +20,7 @@ TABLAS = ("pub_periodo", "pub_programa", "pub_asignatura", "pub_sala", "pub_para
 
 def crear_app(url: str | None = None, token: str | None = None, grupo: str | None = None,
               transport: httpx.BaseTransport | None = None) -> FastAPI:
-    url = (url or os.environ.get("DIRECTUS_URL", "http://directus-satelites:8055")).rstrip("/")
+    url = (url or os.environ.get("DIRECTUS_URL", "http://directus:8055")).rstrip("/")
     token = token if token is not None else os.environ.get("DIRECTUS_TOKEN", "")
     grupo = grupo or os.environ.get("GRUPO", "g1")
     mia = f"sat_{grupo}_registro"

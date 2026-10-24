@@ -1,35 +1,29 @@
 """Publicación para los módulos satélite.
 
-Los grupos de Proyecto Integrador leen por Directus un archivo SQLite APARTE (satelites.db): una réplica de solo
-lectura con tablas pub_*, que se regenera desde el núcleo. Así los satélites no comparten archivo con el núcleo y nunca
-tocan datos personales: aquí no se copia ninguna persona, docente, nombramiento, finanza ni auditoría. Solo catálogo y el
-horario de la propuesta aprobada.
+Los grupos de Proyecto Integrador leen por Directus las tablas pub_*: una copia derivada del catálogo y del horario de la
+propuesta aprobada, que vive en el mismo archivo que el núcleo pero se separa por permisos (cada grupo solo lee pub_* y solo
+escribe en su sat_<grupo>_registro). Aquí no se copia ninguna persona, docente, nombramiento, finanza ni auditoría.
 
-El núcleo se LEE por Directus, con el token del servicio. La réplica se escribe directamente porque es un dato derivado,
-regenerado completo en una sola transacción; no es el sistema de registro.
+Todo pasa por Directus con la cuenta de servicio: el núcleo se lee y pub_* se regenera. La copia se reemplaza tabla por
+tabla (Directus es atómico por colección, no entre colecciones), así que un grupo que lea justo durante la publicación
+puede ver una tabla ya nueva junto a otra aún vieja; se resuelve repitiendo la lectura.
 
 Uso: python -m app.publicacion        (o POST /publicacion con el permiso horarios.exportar)
 """
 import json
-import sqlite3
-from pathlib import Path
+import time
 
 from .core.directus import Directus, exigir
 
-DDL = """
-CREATE TABLE IF NOT EXISTS pub_periodo (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, estado TEXT NOT NULL) STRICT;
-CREATE TABLE IF NOT EXISTS pub_programa (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, tipo TEXT) STRICT;
-CREATE TABLE IF NOT EXISTS pub_asignatura (id INTEGER PRIMARY KEY, codigo TEXT, nombre TEXT NOT NULL, area TEXT,
-                             requiere_laboratorio INTEGER NOT NULL) STRICT;
-CREATE TABLE IF NOT EXISTS pub_sala (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, capacidad INTEGER,
-                       es_laboratorio INTEGER NOT NULL) STRICT;
-CREATE TABLE IF NOT EXISTS pub_paralelo (id INTEGER PRIMARY KEY, periodo_id INTEGER NOT NULL, asignatura_id INTEGER NOT NULL,
-                           codigo TEXT NOT NULL, nrc INTEGER, componente TEXT, cupo_estimado INTEGER) STRICT;
-CREATE TABLE IF NOT EXISTS pub_horario (id INTEGER PRIMARY KEY, paralelo_id INTEGER NOT NULL, sesion INTEGER NOT NULL,
-                          dia TEXT NOT NULL, bloque TEXT NOT NULL, sala_codigo TEXT) STRICT;
-CREATE TABLE IF NOT EXISTS pub_estado (id INTEGER PRIMARY KEY CHECK (id = 1), publicado_en TEXT NOT NULL) STRICT;
-"""
-ORDEN = ["pub_periodo", "pub_programa", "pub_asignatura", "pub_sala", "pub_paralelo", "pub_horario"]
+COLUMNAS = {
+    "pub_periodo": ("id", "codigo", "estado"),
+    "pub_programa": ("id", "codigo", "nombre", "tipo"),
+    "pub_asignatura": ("id", "codigo", "nombre", "area", "requiere_laboratorio"),
+    "pub_sala": ("id", "codigo", "nombre", "capacidad", "es_laboratorio"),
+    "pub_paralelo": ("id", "periodo_id", "asignatura_id", "codigo", "nrc", "componente", "cupo_estimado"),
+    "pub_horario": ("id", "paralelo_id", "sesion", "dia", "bloque", "sala_codigo"),
+}
+ORDEN = list(COLUMNAS)
 SIN_ELIMINADAS = {"eliminado_en": {"_null": True}}
 
 
@@ -67,40 +61,24 @@ def extraer(d: Directus) -> dict[str, list[tuple]]:
     }
 
 
-def publicar(d: Directus, ruta_satelites: str) -> dict:
-    """Reemplaza las tablas pub_* en satelites.db. Devuelve cuántas filas quedaron en cada una."""
+def publicar(d: Directus) -> dict:
+    """Reemplaza las tablas pub_* por Directus. Devuelve cuántas filas quedaron en cada una."""
     datos = extraer(d)
-    Path(ruta_satelites).parent.mkdir(parents=True, exist_ok=True)
-    sat = sqlite3.connect(ruta_satelites, isolation_level=None, timeout=10)
-    try:
-        sat.execute("PRAGMA journal_mode = WAL")
-        sat.execute("PRAGMA busy_timeout = 5000")
-        sat.execute("BEGIN IMMEDIATE")
-        for sentencia in DDL.split(";"):
-            if sentencia.strip():
-                sat.execute(sentencia)
-        for tabla in reversed(ORDEN):          # réplica: se regenera completa (no es el núcleo)
-            sat.execute(f"DELETE FROM {tabla}")
-        for tabla in ORDEN:
-            filas = datos[tabla]
-            if filas:
-                sat.executemany(f"INSERT INTO {tabla} VALUES ({','.join('?' * len(filas[0]))})", filas)
-        sat.execute("INSERT OR REPLACE INTO pub_estado (id, publicado_en) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))")
-        sat.execute("COMMIT")
-        return {t: len(datos[t]) for t in ORDEN}
-    except BaseException:
-        if sat.in_transaction:
-            sat.execute("ROLLBACK")
-        raise
-    finally:
-        sat.close()
+    for tabla in ORDEN + ["pub_estado"]:      # primero se vacía todo: si falla una lectura de arriba no se toca nada
+        exigir(d.como_servicio("DELETE", f"/items/{tabla}", json={"query": {"filter": {"id": {"_gte": 0}}}}))
+    for tabla in ORDEN:
+        filas = [dict(zip(COLUMNAS[tabla], f)) for f in datos[tabla]]
+        if filas:
+            exigir(d.como_servicio("POST", f"/items/{tabla}", json=filas, params={"fields": "id"}))
+    exigir(d.como_servicio("POST", "/items/pub_estado", json={"id": 1, "publicado_en": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                           params={"fields": "id"}))
+    return {t: len(datos[t]) for t in ORDEN}
 
 
 def main() -> None:
-    import os
     from .core.config import get_settings
     s = get_settings()
-    cuentas = publicar(Directus(s.directus_url, s.servicio_token), os.environ.get("SATELITES_DB_PATH", s.satelites_db_path))
+    cuentas = publicar(Directus(s.directus_url, s.servicio_token))
     print("publicado:", ", ".join(f"{k}={v}" for k, v in cuentas.items()))
 
 
