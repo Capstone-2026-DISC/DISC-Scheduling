@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   estilo:
-    name: 1. Estilo del código (ruff)
+    name: Estilo del código (ruff)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -29,7 +29,7 @@ jobs:
       - name: Formato
         run: ruff format --check .
   secretos:
-    name: 1. Secretos en el historial (gitleaks)
+    name: Secretos en el historial (gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -41,7 +41,7 @@ jobs:
           curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
           ./gitleaks detect --source . --redact --verbose
   frontend:
-    name: 1. Frontend (instalar y compilar)
+    name: Frontend (instalar y compilar)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -59,7 +59,7 @@ jobs:
       - name: Compilar
         run: npm run build
   unitarias:
-    name: 2. Esquema, permisos y pruebas unitarias
+    name: Esquema, permisos y pruebas unitarias
     needs: [estilo, secretos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -94,7 +94,7 @@ jobs:
           python plantillas_importacion/generar_plantillas.py
           git diff --exit-code -- datos_prueba/csv plantillas_importacion/csv plantillas_importacion/README.md
   integracion:
-    name: 3. Integración con el stack real (Directus, API, frontend y módulo)
+    name: Integración con el stack real (Directus, API, frontend y módulo)
     needs: [unitarias, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -154,7 +154,7 @@ jobs:
         if: always()
         run: docker compose --profile demo down -v
   imagenes:
-    name: 4. Imágenes (se publican solo desde main)
+    name: Imágenes (se publican solo desde main)
     needs: [integracion]
     runs-on: ubuntu-latest
     timeout-minutes: 15
