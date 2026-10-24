@@ -84,7 +84,7 @@ Lo que Directus **no** hace, y esta API cubre o deja anotado:
 
 - No cuenta intentos fallidos ni bloquea cuentas: lo hace la API, con campos en el usuario de Directus.
 - No invalida el token de acceso al cerrar sesión. La API recuerda los tokens cerrados y los rechaza hasta que vencen. Eso no alcanza a quien llame a Directus directamente.
-- Un refresh token ya usado se rechaza, pero no cierra el resto de la sesión como hacía la versión anterior de la API.
+- Un refresh token ya usado se rechaza, pero no cierra el resto de la sesión.
 - No audita los inicios de sesión fallidos: van a `plataforma_auditoria`.
 
 ## Permisos
