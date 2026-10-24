@@ -38,5 +38,5 @@ Se genera desde `identidad_rol_permiso` y el esquema con `python -m app.directus
 
 - **Servicio de la API** (`servicio_api`): crea y modifica usuarios (solo con roles de la plataforma, nunca el Administrator de Directus), mantiene el espejo `identidad_usuario`, escribe `plataforma_auditoria` y lee lo que se publica a los satélites. No borra nada ni toca políticas.
 - **Administrador de arranque de Directus**: cuenta de emergencia. Puede todo menos borrar de verdad, porque lo frenan los triggers del esquema.
-- **Satélites** (`satelite_g1` a `g4`): viven en otra instancia y leen la réplica `pub_*`; ver `docs/backend.md`.
+- **Satélites** (`satelite_g1` a `g4`): usan este mismo Directus con un token propio: leen la copia `pub_*` y solo escriben en su `sat_<grupo>_registro`; ver `docs/backend.md`.
 

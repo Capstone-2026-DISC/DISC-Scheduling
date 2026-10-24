@@ -19,22 +19,17 @@ Cada semestre el Encargado Docente arma a mano la oferta académica del departam
 ```mermaid
 flowchart LR
     persona(["Persona usuaria"]) --> frontend["frontend<br/>Next.js"] --> api["api<br/>FastAPI"]
-
-    subgraph nucleo["Núcleo"]
-        directus["directus<br/>permisos y actividad"] --> db1[("plataforma.db")]
-    end
-
-    subgraph sat["Satélites"]
-        dsat["directus-satelites<br/>token y límite por grupo"] --> db2[("satelites.db<br/>sin datos personales")]
-    end
-
     api -->|"sesión de la persona"| directus
-    modulos["módulos de los grupos<br/>g1 a g4"] -->|"token del grupo"| dsat
+    modulos["módulos de los grupos<br/>g1 a g4"] -->|"token del grupo"| directus
+
+    subgraph dx["Un solo Directus"]
+        directus["directus<br/>roles, permisos y actividad"] --> db[("plataforma.db<br/>núcleo, pub_* y sat_grupo_registro")]
+    end
 ```
 
-La API no abre `plataforma.db`: todo lo que lee o escribe del núcleo pasa por Directus. Los módulos de los grupos tampoco tocan el núcleo, hablan con su propio Directus. Lo único que la API hace sin Directus es regenerar la copia `satelites.db` (sin datos personales) que leen los módulos; esa copia no es el núcleo.
+Todo usa SQLite y Directus es la única puerta a los datos: la API le habla con la sesión de cada persona, y los módulos de los grupos con el token de su grupo. Directus aplica los permisos por rol y departamento y registra quién cambió qué. Dentro de la misma base, cada grupo solo lee las tablas `pub_*` (una copia del catálogo y del horario aprobado, sin datos personales) y solo escribe en su propia tabla `sat_<grupo>_registro`. No ve nada del núcleo.
 
-Todo usa SQLite y Directus es la única puerta a los datos: la API le habla con la sesión de cada persona, y Directus aplica los permisos por rol y departamento y registra quién cambió qué. Los módulos de los grupos leen una réplica sin datos personales y guardan lo suyo en colecciones propias.
+La API no abre `plataforma.db`. Hasta regenerar la copia `pub_*` lo hace por Directus.
 
 ## Despliegue
 
@@ -48,14 +43,13 @@ docker compose up --build --wait
 docker compose logs configurar        # debe terminar con "verificación: todo correcto"
 ```
 
-Los servicios `migrar` y `configurar` corren una vez: el primero crea la base desde el esquema y el segundo deja listos los roles, permisos y usuarios de ambas instancias de Directus y comprueba los permisos. La API arranca cuando `configurar` terminó bien. Si termina con error, el despliegue no está bien.
+Los servicios `migrar` y `configurar` corren una vez: el primero crea la base desde el esquema y el segundo deja listos los roles, permisos y usuarios de Directus, incluido un rol y un token por grupo, y comprueba los permisos. La API arranca cuando `configurar` terminó bien. Si termina con error, el despliegue no está bien.
 
 | Servicio | Puerto | Para qué |
 | --- | --- | --- |
 | `frontend` | 3000 | Interfaz web |
 | `api` | 8000 | API. Documentación interactiva en `/docs` |
-| `directus` | 8055 | Acceso a los datos del núcleo. Cuenta de emergencia con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
-| `directus-satelites` | 8056 | Acceso de los módulos de Proyecto Integrador |
+| `directus` | 8055 | Único acceso a los datos, también para los módulos de Proyecto Integrador. Cuenta de emergencia con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
 | `modulo-simulado` | 8090 | Módulo de ejemplo, solo con el perfil `demo` |
 
 Todos los puertos escuchan solo en `127.0.0.1`.
@@ -67,7 +61,7 @@ Todos los puertos escuchan solo en `127.0.0.1`.
 | `encargado.docente@example.com` | Administrador, con todos los permisos |
 | `usuario.prueba@example.com` | Consulta, solo lectura en el DISC |
 
-**Datos y respaldos.** La base vive en los volúmenes `plataforma_data` y `satelites_data`. El RUT y el correo de las personas se guardan cifrados con `DATA_KEYS` e `INDEX_KEY` del `.env`: respáldelas por separado, porque sin ellas esos datos no se pueden recuperar.
+**Datos y respaldos.** La base vive en el volumen `plataforma_data`. El RUT y el correo de las personas se guardan cifrados con `DATA_KEYS` e `INDEX_KEY` del `.env`: respáldelas por separado, porque sin ellas esos datos no se pueden recuperar.
 
 **Detener.** `docker compose down` conserva los datos. `docker compose down -v` los borra.
 

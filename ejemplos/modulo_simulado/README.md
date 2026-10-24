@@ -27,7 +27,7 @@ Abra http://localhost:8090. El perfil `demo` es opcional y no forma parte de la 
 
 ## Límite de peticiones
 
-Directus limita las peticiones por IP (60 por minuto por defecto). Abrir la página usa 7. El healthcheck del contenedor consulta `/salud`, que no llama a Directus, justamente para no gastar ese límite. Si un módulo real hace muchas consultas, conviene que guarde en caché lo que lee del catálogo.
+Directus no limita hoy las peticiones de los módulos: comparte instancia con la API, que concentra a todas las personas en una sola IP. Aun así conviene cuidar el uso: abrir la página usa 7 consultas, y un módulo real que consulte mucho debería guardar en caché lo que lee del catálogo.
 
 ## Adaptarlo a otro grupo
 
@@ -37,7 +37,7 @@ Cambie estas variables, que están en `compose.yaml`:
 | --- | --- |
 | `GRUPO` | `g1`, `g2`, `g3` o `g4` |
 | `DIRECTUS_TOKEN` | El token de ese grupo (`SAT_TOKEN_G1` a `SAT_TOKEN_G4` del `.env`) |
-| `DIRECTUS_URL` | La dirección de Directus de los satélites. Se cambia sin tocar el código, por ejemplo si hay un proxy delante |
+| `DIRECTUS_URL` | La dirección de Directus. Se cambia sin tocar el código, por ejemplo si hay un proxy delante |
 
 ## Pruebas
 

@@ -32,17 +32,16 @@ docker compose logs configurar          # roles, permisos y verificaciones de Di
 | Servicio | Puerto | Qué es |
 | --- | --- | --- |
 | `migrar` | | Una sola vez: crea `plataforma.db` desde el esquema si no existe |
-| `directus` | 8055 | Directus sobre `plataforma.db`. Es lo único que abre ese archivo en funcionamiento normal |
-| `directus-satelites` | 8056 | Directus sobre `satelites.db`, para los grupos de Proyecto Integrador |
-| `configurar` | | Una sola vez: carga roles y permisos, crea usuarios, publica la réplica y falla si alguna verificación no se cumple |
+| `directus` | 8055 | Directus sobre `plataforma.db`. Es lo único que abre ese archivo en funcionamiento normal, para las personas y para los grupos de Proyecto Integrador |
+| `configurar` | | Una sola vez: carga roles y permisos, crea usuarios y un rol con token por grupo, publica la copia `pub_*` y falla si alguna verificación no se cumple |
 | `api` | 8000 | FastAPI. Arranca cuando `configurar` terminó bien |
 | `frontend` | 3000 | Interfaz web (Next.js). Hoy trae la pantalla de inicio de sesión |
 
-El orden es `migrar`, `directus` y `directus-satelites`, `configurar`, `api`, `frontend`. Las claves de los usuarios iniciales salen de `SEED_ADMIN_PASSWORD` y `SEED_TEST_PASSWORD` del `.env`: `encargado.docente@example.com` (rol Administrador, todos los permisos) y `usuario.prueba@example.com` (consulta, solo lectura en el DISC). El departamento DISC es el id 1 y existe siempre.
+El orden es `migrar`, `directus`, `configurar`, `api`, `frontend`. Las claves de los usuarios iniciales salen de `SEED_ADMIN_PASSWORD` y `SEED_TEST_PASSWORD` del `.env`: `encargado.docente@example.com` (rol Administrador, todos los permisos) y `usuario.prueba@example.com` (consulta, solo lectura en el DISC). El departamento DISC es el id 1 y existe siempre.
 
 ## Quién abre la base
 
-Solo `migrar` (crear la base), `configurar` (proteger el registro de actividad) y el generador de datos de prueba abren SQLite directamente. La API lee el núcleo por Directus. Lo único que la API escribe por su cuenta es la réplica `satelites.db`, que es un dato derivado.
+Solo `migrar` (crear la base), `configurar` (proteger el registro de actividad) y el generador de datos de prueba abren SQLite directamente. La API lee y escribe todo por Directus, incluida la copia `pub_*` que ven los grupos.
 
 ## Autenticación
 
@@ -144,13 +143,15 @@ El navegador solo puede llamar a la API desde los orígenes de `CORS_ORIGINS` (p
 
 ## Satélites
 
-Los grupos de Proyecto Integrador se conectan a una instancia aparte de Directus, sobre `satelites.db`, para no mezclar escritores con el núcleo.
+Los grupos de Proyecto Integrador usan el mismo Directus y el mismo archivo que el núcleo, y se separan por permisos y por tablas, no por instancia.
 
-- `python -m app.publicacion` o `POST /publicacion` (permiso `horarios.exportar`) regenera las tablas `pub_*`: catálogo del DISC y el horario de la propuesta aprobada. El núcleo se lee por Directus con la cuenta de servicio, que no puede leer ninguna persona, docente, nombramiento, finanza ni auditoría.
-- Cada grupo (`g1` a `g4`) tiene un rol y un token estático (`SAT_TOKEN_G1` a `G4` del `.env`). Lee `pub_*`, y solo escribe en su colección `sat_<grupo>_registro`, con borrado lógico y sin permiso de `DELETE`. No ve usuarios, roles ni la colección de otro grupo.
-- La instancia limita las peticiones por IP (60 por minuto, ajustable con `RATE_LIMIT_POINTS`). El paso de verificación comprueba que el límite frena a un satélite que abusa. El Directus del núcleo no lleva ese límite porque la API concentra a todas las personas en una sola IP; el límite de intentos de acceso lo aplica la propia API.
+- **Tablas.** `pub_*` es una copia derivada (catálogo del DISC y horario de la propuesta aprobada) y cada grupo tiene `sat_<grupo>_registro` (`sat_g1_registro` a `sat_g4_registro`, con borrado lógico por trigger).
+- **Publicación.** `python -m app.publicacion` o `POST /publicacion` (permiso `horarios.exportar`) regenera `pub_*` por Directus con la cuenta de servicio, que lee el núcleo sin ver personas, docentes, nombramientos, finanzas ni auditoría. Directus es atómico por colección, no entre colecciones: durante una publicación un grupo podría ver una tabla ya nueva junto a otra vieja, y basta con repetir la lectura.
+- **Permisos de cada grupo (`g1` a `g4`).** Un rol y un token estático (`SAT_TOKEN_G1` a `G4` del `.env`). Lee `pub_*`, y solo escribe en su colección, con borrado lógico y sin permiso de `DELETE`. No ve el núcleo, ni usuarios, ni roles, ni la colección de otro grupo, y su rol no es de la plataforma, así que no puede iniciar sesión como persona en la API. El configurador lo comprueba contra el Directus real.
+- **Compartir archivo tiene un costo.** Un fallo de configuración de permisos expondría el núcleo a los grupos, y el registro de actividad queda en el mismo lugar. Por eso las pruebas de integración y el paso `verificar` revisan que un grupo reciba 403 en todo lo que no es suyo.
+- **Límite de peticiones.** Directus limita por IP, y como la API concentra a todas las personas en una sola IP, el límite está desactivado. Los módulos de los grupos **no** tienen un límite de peticiones hoy. Si se necesita, hay que ponerlo en un proxy delante.
 - `ejemplos/modulo_simulado/` es un módulo de ejemplo que usa exactamente este camino. Se levanta con `docker compose --profile demo up --build` y sirve de modelo para los grupos.
-- Para más colecciones de un grupo se crean con el prefijo `sat_<grupo>_` y se agregan a su política.
+- Para más colecciones de un grupo se crean con el prefijo `sat_<grupo>_`, se agregan al esquema y a `permisos_de_grupo` en `directus_matriz.py`.
 
 ## Importación
 
@@ -179,7 +180,8 @@ python -m pytest -q tests_integracion        # con el stack arriba y LOGIN_RATE_
 ## Límites conocidos y pendiente
 
 - El administrador de arranque de Directus es una cuenta de emergencia: puede escribir sin pasar por la API. Sus cambios quedan en el registro de actividad con su usuario.
-- Si Directus cae, la API responde 503.
+- Si Directus cae, la API responde 503 y los módulos de los grupos también quedan sin servicio.
+- Los módulos de los grupos no tienen límite de peticiones (ver Satélites).
 - Un usuario tiene un solo rol y un solo departamento.
 - Los módulos de corridas de FET y de cálculo de costos todavía solo tienen sus datos y permisos.
 - Autenticación institucional para Directus.
