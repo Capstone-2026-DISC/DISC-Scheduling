@@ -14,15 +14,17 @@ Plataforma web de apoyo a la programación académica del Departamento de Ingeni
 
 Cada semestre el Encargado Docente arma a mano la oferta académica del departamento y controla por separado el gasto en profesores hora y ayudantes. Esta plataforma guarda esos datos, aplica permisos por departamento, deja auditoría de cada cambio y servirá de base para que los grupos de Proyecto Integrador conecten sus módulos.
 
-## Interfaz prevista
+---
 
 <div align="center">
 
 <img src="assets/mockups.gif" alt="Maquetas de la interfaz: inicio de sesión, importación de la planilla, generación y revisión de horarios, versiones, exportación, usuarios, permisos, auditoría y costos" width="720">
 
+<sub>Maquetas del diseño. Hoy el frontend implementa solo el inicio de sesión (ver <a href="#alcance-actual">Alcance actual</a>).</sub>
+
 </div>
 
-Maquetas del diseño de la interfaz. Hoy el frontend implementa solo la pantalla de inicio de sesión; el resto está en desarrollo (ver [Alcance actual](#alcance-actual)).
+---
 
 ## Arquitectura
 
