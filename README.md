@@ -20,8 +20,6 @@ Cada semestre el Encargado Docente arma a mano la oferta académica del departam
 
 <img src="assets/mockups.gif" alt="Maquetas de la interfaz: inicio de sesión, importación de la planilla, generación y revisión de horarios, versiones, exportación, usuarios, permisos, auditoría y costos" width="720">
 
-<sub>Maquetas del diseño. Hoy el frontend implementa solo el inicio de sesión (ver <a href="#alcance-actual">Alcance actual</a>).</sub>
-
 </div>
 
 ---
