@@ -173,5 +173,6 @@ Además, cada pull request revisa que venga de la rama que corresponde y que su 
 | Fabián Carrasco Pallotti | Estudiante |
 | Cristian Jiménez Fuentes | Estudiante |
 | Dr. Brian Keith Norambuena | Profesor guía |
+| Dr. Aldo Quelopana Retamales | Encargado docente |
 
 Proyecto del Departamento de Ingeniería de Sistemas y Computación, Universidad Católica del Norte, Antofagasta.
