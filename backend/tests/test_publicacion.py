@@ -1,6 +1,4 @@
 """Réplica para satélites: se lee del núcleo por Directus y no lleva ningún dato personal."""
-import sqlite3
-
 import httpx
 
 from app.core.directus import Directus
@@ -47,22 +45,23 @@ def test_nunca_se_consultan_colecciones_con_datos_personales(directus):
     assert all(l[3] == "Bearer " + "s" * 40 for l in directus.llamadas)              # con la cuenta de servicio
 
 
-def test_la_replica_no_tiene_ningun_dato_personal_y_se_puede_repetir(directus, tmp_path):
+def test_la_copia_se_regenera_por_directus_sin_datos_personales_y_se_puede_repetir(directus):
     sembrar(directus)
-    ruta = str(tmp_path / "sat.db")
-    cuentas = publicar(cliente(directus), ruta)
-    assert cuentas["pub_horario"] == 1 and cuentas == publicar(cliente(directus), ruta)
-    sat = sqlite3.connect(ruta)
-    tablas = {r[0] for r in sat.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert tablas == set(ORDEN) | {"pub_estado"}
-    volcado = "\n".join(str(f) for t in tablas for f in sat.execute(f"SELECT * FROM {t}"))
+    directus.items["pub_estado"] = []
+    cuentas = publicar(cliente(directus))
+    assert cuentas["pub_horario"] == 1 and cuentas == publicar(cliente(directus))           # repetir no duplica
+    assert directus.items["pub_horario"] == [{"id": 1, "paralelo_id": 1, "sesion": 1, "dia": "Ma", "bloque": "B", "sala_codigo": "S-1"}] or \
+        [f["dia"] for f in directus.items["pub_horario"]] == ["Ma"]
+    assert len(directus.items["pub_estado"]) == 1 and directus.items["pub_estado"][0]["id"] == 1
+    volcado = "\n".join(str(f) for t in ORDEN for f in directus.items[t])
     for prohibido in ("Persona Ficticia", "v1:k1", "rut", "ejemplo.invalid"):
         assert prohibido not in volcado
+    escritas = {r.split("/")[2] for m, r, *_ in directus.llamadas if m in ("POST", "DELETE") and r.startswith("/items/pub_")}
+    assert escritas <= set(ORDEN) | {"pub_estado"}                                           # solo toca la copia
 
 
-def test_publicar_por_api_pide_permiso_y_audita(client, admin, consulta, directus, tmp_path):
+def test_publicar_por_api_pide_permiso_y_audita(client, admin, consulta, directus):
     sembrar(directus)
-    client.app.state.settings = client.app.state.settings.__class__(**{**client.app.state.settings.__dict__, "satelites_db_path": str(tmp_path / "s.db")})
     assert client.post("/publicacion", headers=consulta).status_code == 403
     r = client.post("/publicacion", headers=admin)
     assert r.status_code == 200 and r.json()["publicado"]["pub_horario"] == 1

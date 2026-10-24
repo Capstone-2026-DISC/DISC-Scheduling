@@ -1,6 +1,6 @@
 """Pruebas de integración: contra el stack real (docker compose up), sin simulaciones.
 
-Variables (salen del .env; en local se leen solos desde ../.env): API_URL, DIRECTUS_URL, SATELITES_URL, ADMIN_EMAIL,
+Variables (salen del .env; en local se leen solos desde ../.env): API_URL, DIRECTUS_URL, ADMIN_EMAIL,
 ADMIN_PASSWORD, SEED_ADMIN_PASSWORD, SEED_TEST_PASSWORD, SAT_TOKEN_G1. Si la API no responde, las pruebas se omiten.
 Son repetibles: cada una crea sus propios datos con nombres únicos y no toca las cuentas iniciales más que para entrar.
 LOGIN_RATE_PER_MINUTE debe ser alto en el .env (cada prueba inicia sesión).
@@ -26,7 +26,6 @@ def _cargar_env():
 _cargar_env()
 API = os.environ.get("API_URL", "http://localhost:8000")
 DIRECTUS = os.environ.get("DIRECTUS_URL", "http://localhost:8055")
-SATELITES = os.environ.get("SATELITES_URL", "http://localhost:8056")
 ADMIN = "encargado.docente@example.com"
 PRUEBA = "usuario.prueba@example.com"
 CLAVE_NUEVA = "Clave-Larga-De-Prueba-77x"

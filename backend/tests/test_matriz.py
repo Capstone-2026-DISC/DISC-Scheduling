@@ -130,7 +130,8 @@ def test_permisos_propios_para_ver_el_perfil_y_cambiar_la_clave():
 def test_la_cuenta_de_servicio_tiene_minimos_privilegios(esq):
     p = m.permisos_servicio(esq, ["rol-1", "rol-2"])
     acciones = {(x["collection"], x["action"]) for x in p}
-    assert not any(a == "delete" for _, a in acciones)
+    assert {c for c, a in acciones if a == "delete"} == set(m.PUBLICADAS) | {"pub_estado"}      # solo regenera la copia, nada del núcleo
+    assert {c for c, a in acciones if a == "create" and c.startswith("pub_")} == set(m.PUBLICADAS) | {"pub_estado"}
     assert not any(c in ("directus_policies", "directus_permissions", "directus_roles") and a != "read" for c, a in acciones)
     crear = next(x for x in p if x["collection"] == "directus_users" and x["action"] == "create")
     assert crear["validation"] == {"_or": [{"role": {"_in": ["rol-1", "rol-2"]}}, {"role": {"_null": True}}]}   # nunca el rol Administrator
@@ -143,3 +144,12 @@ def test_la_tabla_de_matriz_resume_cada_rol(esq):
     adm = next(f for f in filas if f["rol"] == "administrador")
     assert adm["alcance"] == "todos los departamentos" and "catalogo_sala (create)" in adm["escritura"] and adm["por_api"]
     assert next(f for f in filas if f["rol"] == "consulta")["escritura"] == []
+
+
+def test_un_grupo_lee_la_copia_y_solo_escribe_en_lo_suyo():
+    p = m.permisos_de_grupo("g1")
+    acciones = {(x["collection"], x["action"]) for x in p}
+    assert {c for c, a in acciones if a == "read"} == set(m.PUBLICADAS) | {"pub_estado", "sat_g1_registro"}
+    assert {c for c, a in acciones if a != "read"} == {"sat_g1_registro"}                       # nunca pub_*, nunca otro grupo
+    assert not any(a == "delete" for _, a in acciones)                                          # borrado lógico
+    assert not any(c.startswith(("catalogo_", "finanzas_", "identidad_", "plataforma_", "directus_")) for c, _ in acciones)

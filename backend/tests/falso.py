@@ -159,6 +159,10 @@ class DirectusFalso:
             sel = [dict(f) for f in filas if _coincide(f, filtro) and not f.get("eliminado_en")]
             lim = int(params.get("limit", 100))
             return self._json(200, sel if lim < 0 else sel[int(params.get("offset", 0)):int(params.get("offset", 0)) + lim])
+        if metodo == "DELETE":                                   # borrado masivo por filtro (solo la copia pub_*)
+            filtro = (cuerpo or {}).get("query", {}).get("filter")
+            self.items[coleccion] = [f for f in filas if not _coincide(f, filtro)]
+            return httpx.Response(204)
         if metodo == "POST":
             nuevos = cuerpo if isinstance(cuerpo, list) else [cuerpo]
             creados = []
