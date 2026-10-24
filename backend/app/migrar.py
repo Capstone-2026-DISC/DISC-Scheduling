@@ -3,6 +3,7 @@ y el generador de datos de prueba, que abre SQLite directamente; el resto de la 
 
 Uso: python -m app.migrar       (variables: DB_PATH, SCHEMA_PATH)
 """
+
 import os
 import sqlite3
 from pathlib import Path

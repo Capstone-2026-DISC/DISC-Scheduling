@@ -6,20 +6,25 @@ sat_<grupo>_registro y puede comprobar en vivo lo que no puede hacer. No usa el 
 
 Variables: DIRECTUS_URL, DIRECTUS_TOKEN (el token del grupo) y GRUPO (g1 a g4).
 """
+
 import html
 import os
+from datetime import UTC, datetime
 from urllib.parse import quote
-from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 TABLAS = ("pub_periodo", "pub_programa", "pub_asignatura", "pub_sala", "pub_paralelo", "pub_horario")
 
 
-def crear_app(url: str | None = None, token: str | None = None, grupo: str | None = None,
-              transport: httpx.BaseTransport | None = None) -> FastAPI:
+def crear_app(
+    url: str | None = None,
+    token: str | None = None,
+    grupo: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> FastAPI:
     url = (url or os.environ.get("DIRECTUS_URL", "http://directus:8055")).rstrip("/")
     token = token if token is not None else os.environ.get("DIRECTUS_TOKEN", "")
     grupo = grupo or os.environ.get("GRUPO", "g1")
@@ -48,7 +53,12 @@ def crear_app(url: str | None = None, token: str | None = None, grupo: str | Non
             return f"<p class=nota>{html.escape(vacio)}</p>"
         cols = list(datos[0])
         cab = "".join(f"<th>{html.escape(str(c))}</th>" for c in cols)
-        cuerpo = "".join("<tr>" + "".join(f"<td>{html.escape('—' if f.get(c) is None else str(f.get(c)))}</td>" for c in cols) + "</tr>" for f in datos)
+        cuerpo = "".join(
+            "<tr>"
+            + "".join(f"<td>{html.escape('—' if f.get(c) is None else str(f.get(c)))}</td>" for c in cols)
+            + "</tr>"
+            for f in datos
+        )
         return f"<table><tr>{cab}</tr>{cuerpo}</table>"
 
     def pagina(mensaje: str = "", limites: str = "") -> str:
@@ -57,7 +67,9 @@ def crear_app(url: str | None = None, token: str | None = None, grupo: str | Non
             e, datos = filas(t, 5)
             estados.append(e)
             if e == 200:
-                bloques.append(f"<h3>{t}</h3>{tabla(datos, 'Sin filas: el core aún no publicó datos (POST /publicacion).')}")
+                bloques.append(
+                    f"<h3>{t}</h3>{tabla(datos, 'Sin filas: el core aún no publicó datos (POST /publicacion).')}"
+                )
             else:
                 bloques.append(f"<h3>{t}</h3><p class=error>No se pudo leer ({e}).</p>")
         e, mios = filas(mia)
@@ -65,8 +77,12 @@ def crear_app(url: str | None = None, token: str | None = None, grupo: str | Non
         conectado = any(x not in (0, 502, 503, 504) for x in estados)
         limitado = 429 in estados
         propios = tabla(mios, "Todavía no hay registros.") if e == 200 else f"<p class=error>No se pudo leer ({e}).</p>"
-        ids = "".join(f"<form method=post action=/registro/{int(f['id'])}/eliminar class=en-linea>"
-                      f"<button>Eliminar #{int(f['id'])}</button></form>" for f in mios if "id" in f)
+        ids = "".join(
+            f"<form method=post action=/registro/{int(f['id'])}/eliminar class=en-linea>"
+            f"<button>Eliminar #{int(f['id'])}</button></form>"
+            for f in mios
+            if "id" in f
+        )
         return f"""<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
 <title>Módulo de ejemplo {html.escape(grupo)}</title>
 <style>body{{font:16px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#1b2430}}
@@ -115,7 +131,7 @@ th{{background:#eef2f6}}.nota{{color:#5c6773}}.error{{color:#b3261e}}.ok{{color:
     @app.post("/registro/{rid}/eliminar")
     def eliminar(rid: int):
         # borrado lógico: el token del grupo no tiene permiso de DELETE
-        ahora = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ahora = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         e, _ = pedir("PATCH", f"/items/{mia}/{rid}", json={"eliminado_en": ahora})
         msg = "Registro eliminado (borrado lógico)." if e == 200 else f"No se pudo eliminar ({e})."
         return RedirectResponse(f"/?mensaje={quote(msg)}", status_code=303)
@@ -124,7 +140,12 @@ th{{background:#eef2f6}}.nota{{color:#5c6773}}.error{{color:#b3261e}}.ok{{color:
     def limites():
         intentos = [
             ("Leer datos personales (catalogo_persona)", "GET", "/items/catalogo_persona", None),
-            ("Escribir en el catálogo publicado (pub_sala)", "POST", "/items/pub_sala", {"codigo": "X", "es_laboratorio": 0}),
+            (
+                "Escribir en el catálogo publicado (pub_sala)",
+                "POST",
+                "/items/pub_sala",
+                {"codigo": "X", "es_laboratorio": 0},
+            ),
             (f"Escribir en la colección de otro grupo ({otro})", "POST", f"/items/{otro}", {"clave": "x"}),
             (f"Leer la colección de otro grupo ({otro})", "GET", f"/items/{otro}", None),
             ("Borrar de verdad un registro propio", "DELETE", f"/items/{mia}/1", None),
@@ -134,9 +155,15 @@ th{{background:#eef2f6}}.nota{{color:#5c6773}}.error{{color:#b3261e}}.ok{{color:
         for desc, metodo, ruta, cuerpo in intentos:
             e, _ = pedir(metodo, ruta, **({"json": cuerpo} if cuerpo else {}))
             rechazado = e in (401, 403)
-            filas_.append(f"<tr><td>{html.escape(desc)}</td><td>{metodo}</td><td>{e}</td>"
-                          f"<td class={'ok' if rechazado else 'error'}>{'rechazado, correcto' if rechazado else 'NO fue rechazado'}</td></tr>")
-        cuerpo = "<table><tr><th>Intento</th><th>Método</th><th>Respuesta</th><th>Resultado</th></tr>" + "".join(filas_) + "</table>"
+            filas_.append(
+                f"<tr><td>{html.escape(desc)}</td><td>{metodo}</td><td>{e}</td>"
+                f"<td class={'ok' if rechazado else 'error'}>{'rechazado, correcto' if rechazado else 'NO fue rechazado'}</td></tr>"
+            )
+        cuerpo = (
+            "<table><tr><th>Intento</th><th>Método</th><th>Respuesta</th><th>Resultado</th></tr>"
+            + "".join(filas_)
+            + "</table>"
+        )
         return pagina(limites=cuerpo)
 
     return app

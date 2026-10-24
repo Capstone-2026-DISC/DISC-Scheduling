@@ -5,6 +5,7 @@ ADMIN_PASSWORD, SEED_ADMIN_PASSWORD, SEED_TEST_PASSWORD, SAT_TOKEN_G1. Si la API
 Son repetibles: cada una crea sus propios datos con nombres únicos y no toca las cuentas iniciales más que para entrar.
 LOGIN_RATE_PER_MINUTE debe ser alto en el .env (cada prueba inicia sesión).
 """
+
 import os
 import random
 import uuid
@@ -34,7 +35,7 @@ CLAVE_NUEVA = "Clave-Larga-De-Prueba-77x"
 def pytest_collection_modifyitems(config, items):
     try:
         ok = httpx.get(API + "/health", timeout=5).json().get("directus") == "up"
-    except Exception:                                   # noqa: BLE001
+    except Exception:  # noqa: BLE001
         ok = False
     if not ok:
         saltar = pytest.mark.skip(reason=f"la API no responde en {API}: levante el stack con docker compose up")
@@ -72,9 +73,15 @@ def consulta(api):
 @pytest.fixture(scope="session")
 def boot():
     """Sesión del administrador de arranque de Directus: solo para preparar datos y leer su registro de actividad."""
-    r = httpx.post(DIRECTUS + "/auth/login", json={"email": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"], "mode": "json"}, timeout=30)
+    r = httpx.post(
+        DIRECTUS + "/auth/login",
+        json={"email": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"], "mode": "json"},
+        timeout=30,
+    )
     assert r.status_code == 200, r.text
-    c = httpx.Client(base_url=DIRECTUS, headers={"Authorization": f"Bearer {r.json()['data']['access_token']}"}, timeout=60)
+    c = httpx.Client(
+        base_url=DIRECTUS, headers={"Authorization": f"Bearer {r.json()['data']['access_token']}"}, timeout=60
+    )
     yield c
     c.close()
 
@@ -85,7 +92,11 @@ def depto2(boot):
     r = boot.get("/items/identidad_departamento", params={"filter[codigo][_eq]": "DMAT", "fields": "id"}).json()["data"]
     if r:
         return r[0]["id"]
-    return boot.post("/items/identidad_departamento", json={"codigo": "DMAT", "nombre": "Departamento de prueba"}, params={"fields": "id"}).json()["data"]["id"]
+    return boot.post(
+        "/items/identidad_departamento",
+        json={"codigo": "DMAT", "nombre": "Departamento de prueba"},
+        params={"fields": "id"},
+    ).json()["data"]["id"]
 
 
 def unico(prefijo="p") -> str:

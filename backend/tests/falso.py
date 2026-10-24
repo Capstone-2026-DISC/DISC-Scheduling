@@ -4,6 +4,7 @@ Implementa lo justo de la API de Directus para ejercitar la lógica de la API (t
 por intentos, comprobaciones previas, importaciones). NO aplica permisos por rol ni por departamento: eso lo hace
 Directus de verdad y se prueba en tests_integracion contra una instancia real.
 """
+
 import json
 from collections import defaultdict
 
@@ -39,30 +40,82 @@ class DirectusFalso:
     def __init__(self):
         self.llamadas: list[tuple] = []
         self.items: dict[str, list[dict]] = defaultdict(list)
-        self.sesiones: dict[str, dict] = {}          # access_token -> usuario
-        self.refresh: dict[str, str] = {}            # refresh_token -> email
+        self.sesiones: dict[str, dict] = {}  # access_token -> usuario
+        self.refresh: dict[str, str] = {}  # refresh_token -> email
         self.usuarios = {}
-        self.fallos: dict[tuple, tuple] = {}         # (método, ruta) -> (estado, cuerpo) para forzar errores
-        self.agregar_usuario("encargado.docente@example.com", "Clave-Admin-de-prueba-1", ADMIN_ID, "disc_administrador", None)
+        self.fallos: dict[tuple, tuple] = {}  # (método, ruta) -> (estado, cuerpo) para forzar errores
+        self.agregar_usuario(
+            "encargado.docente@example.com", "Clave-Admin-de-prueba-1", ADMIN_ID, "disc_administrador", None
+        )
         self.agregar_usuario("usuario.prueba@example.com", "Clave-Prueba-de-prueba-2", CONSULTA_ID, "disc_consulta", 1)
-        todos = ["catalogo.ver", "catalogo.editar", "catalogo.importar", "personas.ver_datos_personales", "usuarios.gestionar",
-                 "departamentos.ver_otros", "departamentos.gestionar", "horarios.ver", "horarios.editar", "horarios.generar",
-                 "horarios.exportar", "horarios.aprobar", "horarios.enviar", "restricciones.ver", "restricciones.gestionar",
-                 "finanzas.ver", "finanzas.editar", "proyeccion.ver"]
-        for rol, perms in {"administrador": todos,
-                           "encargado_docente": ["catalogo.ver", "catalogo.editar", "catalogo.importar", "personas.ver_datos_personales",
-                                                 "horarios.ver", "horarios.editar", "finanzas.ver", "finanzas.editar"],
-                           "consulta": ["catalogo.ver", "horarios.ver"]}.items():
+        todos = [
+            "catalogo.ver",
+            "catalogo.editar",
+            "catalogo.importar",
+            "personas.ver_datos_personales",
+            "usuarios.gestionar",
+            "departamentos.ver_otros",
+            "departamentos.gestionar",
+            "horarios.ver",
+            "horarios.editar",
+            "horarios.generar",
+            "horarios.exportar",
+            "horarios.aprobar",
+            "horarios.enviar",
+            "restricciones.ver",
+            "restricciones.gestionar",
+            "finanzas.ver",
+            "finanzas.editar",
+            "proyeccion.ver",
+        ]
+        for rol, perms in {
+            "administrador": todos,
+            "encargado_docente": [
+                "catalogo.ver",
+                "catalogo.editar",
+                "catalogo.importar",
+                "personas.ver_datos_personales",
+                "horarios.ver",
+                "horarios.editar",
+                "finanzas.ver",
+                "finanzas.editar",
+            ],
+            "consulta": ["catalogo.ver", "horarios.ver"],
+        }.items():
             for p in perms:
-                self.items["identidad_rol_permiso"].append({"id": len(self.items["identidad_rol_permiso"]) + 1, "rol": rol, "permiso": p, "revocado_en": None})
-        self.items["identidad_usuario"] = [{"id": 1, "directus_id": ADMIN_ID, "email": "encargado.docente@example.com", "nombre": "Encargado Docente", "eliminado_en": None},
-                                           {"id": 2, "directus_id": CONSULTA_ID, "email": "usuario.prueba@example.com", "nombre": "Usuario de prueba", "eliminado_en": None}]
+                self.items["identidad_rol_permiso"].append(
+                    {"id": len(self.items["identidad_rol_permiso"]) + 1, "rol": rol, "permiso": p, "revocado_en": None}
+                )
+        self.items["identidad_usuario"] = [
+            {
+                "id": 1,
+                "directus_id": ADMIN_ID,
+                "email": "encargado.docente@example.com",
+                "nombre": "Encargado Docente",
+                "eliminado_en": None,
+            },
+            {
+                "id": 2,
+                "directus_id": CONSULTA_ID,
+                "email": "usuario.prueba@example.com",
+                "nombre": "Usuario de prueba",
+                "eliminado_en": None,
+            },
+        ]
         self.items["identidad_departamento"] = [{"id": 1, "codigo": "DISC"}, {"id": 2, "codigo": "DMAT"}]
 
     def agregar_usuario(self, email, clave, uid, rol, depto):
-        self.usuarios[email] = {"id": uid, "email": email, "password": clave, "first_name": email.split("@")[0], "status": "active",
-                                "departamento_id": depto, "intentos_fallidos": 0, "bloqueado_hasta": None,
-                                "role": {"id": "r-" + rol, "name": rol} if rol else None}
+        self.usuarios[email] = {
+            "id": uid,
+            "email": email,
+            "password": clave,
+            "first_name": email.split("@")[0],
+            "status": "active",
+            "departamento_id": depto,
+            "intentos_fallidos": 0,
+            "bloqueado_hasta": None,
+            "role": {"id": "r-" + rol, "name": rol} if rol else None,
+        }
 
     # -- helpers ----------------------------------------------------------------------------------------
     def _usuario_de(self, req):
@@ -83,7 +136,9 @@ class DirectusFalso:
         ruta, metodo = req.url.path, req.method
         cuerpo = json.loads(req.content) if req.content else None
         params = dict(req.url.params)
-        self.llamadas.append((metodo, ruta, cuerpo, req.headers.get("authorization"), req.headers.get("x-forwarded-for")))
+        self.llamadas.append(
+            (metodo, ruta, cuerpo, req.headers.get("authorization"), req.headers.get("x-forwarded-for"))
+        )
         if (metodo, ruta) in self.fallos:
             e, c = self.fallos[(metodo, ruta)]
             return httpx.Response(e, json=c)
@@ -109,21 +164,39 @@ class DirectusFalso:
             if metodo == "PATCH":
                 u["password"] = cuerpo["password"]
                 return self._json(200, {"id": u["id"]})
-            return self._json(200, {k: u[k] for k in ("id", "email", "first_name", "status", "departamento_id", "role")})
+            return self._json(
+                200, {k: u[k] for k in ("id", "email", "first_name", "status", "departamento_id", "role")}
+            )
         if ruta == "/users":
             if metodo == "GET":
                 filtro = json.loads(params["filter"]) if "filter" in params else None
                 filas = [dict(u) for u in self.usuarios.values() if _coincide({"email": u["email"]}, filtro)]
                 return self._json(200, filas)
             email = cuerpo["email"]
-            self.agregar_usuario(email, cuerpo["password"], f"{len(self.usuarios):08d}-0000-0000-0000-000000000000", None, None)
+            self.agregar_usuario(
+                email, cuerpo["password"], f"{len(self.usuarios):08d}-0000-0000-0000-000000000000", None, None
+            )
             return self._json(200, {"id": self.usuarios[email]["id"]})
         if ruta.startswith("/users/"):
             uid = ruta.split("/")[2]
             for u in self.usuarios.values():
                 if u["id"] == uid:
                     if "role" in cuerpo:
-                        u["role"] = {"id": cuerpo["role"], "name": next((n for n in ("disc_administrador", "disc_consulta", "disc_encargado_docente") if "r-" + n == cuerpo["role"]), None)} if cuerpo["role"] else None
+                        u["role"] = (
+                            {
+                                "id": cuerpo["role"],
+                                "name": next(
+                                    (
+                                        n
+                                        for n in ("disc_administrador", "disc_consulta", "disc_encargado_docente")
+                                        if "r-" + n == cuerpo["role"]
+                                    ),
+                                    None,
+                                ),
+                            }
+                            if cuerpo["role"]
+                            else None
+                        )
                     u.update({k: v for k, v in cuerpo.items() if k != "role"})
                     return self._json(200, {"id": uid})
             return self._error(403, "no permission", "FORBIDDEN")
@@ -145,7 +218,7 @@ class DirectusFalso:
     def _items(self, metodo, partes, cuerpo, params, req):
         coleccion = partes[0]
         filas = self.items[coleccion]
-        if len(partes) == 2:                                     # una fila
+        if len(partes) == 2:  # una fila
             fila = next((f for f in filas if str(f.get("id", f.get("persona_id"))) == partes[1]), None)
             if fila is None or (metodo == "GET" and fila.get("eliminado_en")):
                 return self._error(403, "You don't have permission to access this.", "FORBIDDEN")
@@ -158,8 +231,10 @@ class DirectusFalso:
             filtro = json.loads(params["filter"]) if "filter" in params else None
             sel = [dict(f) for f in filas if _coincide(f, filtro) and not f.get("eliminado_en")]
             lim = int(params.get("limit", 100))
-            return self._json(200, sel if lim < 0 else sel[int(params.get("offset", 0)):int(params.get("offset", 0)) + lim])
-        if metodo == "DELETE":                                   # borrado masivo por filtro (solo la copia pub_*)
+            return self._json(
+                200, sel if lim < 0 else sel[int(params.get("offset", 0)) : int(params.get("offset", 0)) + lim]
+            )
+        if metodo == "DELETE":  # borrado masivo por filtro (solo la copia pub_*)
             filtro = (cuerpo or {}).get("query", {}).get("filter")
             self.items[coleccion] = [f for f in filas if not _coincide(f, filtro)]
             return httpx.Response(204)
@@ -169,7 +244,11 @@ class DirectusFalso:
             for n in nuevos:
                 for clave in self._unicos.get(coleccion, ()):
                     if any(f.get(clave) == n.get(clave) for f in filas):
-                        return self._error(400, f'Value "{n.get(clave)}" for field "{clave}" in collection "{coleccion}" has to be unique.', "RECORD_NOT_UNIQUE")
+                        return self._error(
+                            400,
+                            f'Value "{n.get(clave)}" for field "{clave}" in collection "{coleccion}" has to be unique.',
+                            "RECORD_NOT_UNIQUE",
+                        )
                 fila = {"id": len(filas) + 1, **n}
                 creados.append(fila)
             filas.extend(creados)

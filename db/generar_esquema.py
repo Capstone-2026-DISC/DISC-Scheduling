@@ -5,6 +5,7 @@ Las tablas y los datos base están escritos a mano aquí; los triggers repetitiv
 (borrado lógico) se generan por tabla para que no se desvíen.
 Uso: python3 generar_esquema.py > esquema_plataforma.sql
 """
+
 import sys
 
 TS = "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
@@ -892,27 +893,64 @@ PUBLICACION += "\n".join(REGISTRO_SATELITE.format(g=g) for g in SATELITES) + "\n
 # Tablas con DELETE permitido (datos derivados de un borrador) y tablas con borrado lógico
 BORRABLES = {"horarios_asignacion", "horarios_hallazgo", "horarios_corrida_actividad"}
 SIN_BORRADO = [  # todas las tablas de negocio menos las borrables y la auditoría (que tiene su propio trigger)
-    "identidad_departamento", "identidad_usuario", "identidad_rol", "identidad_permiso", "identidad_rol_permiso",
-    "plataforma_importacion", "plataforma_fila_importada", "plataforma_modulo",
-    "catalogo_periodo", "catalogo_programa", "catalogo_asignatura", "catalogo_plan_nivel", "catalogo_dia",
-    "catalogo_bloque", "catalogo_sala", "catalogo_persona", "catalogo_docente", "catalogo_ayudante",
-    "horarios_liga", "horarios_paralelo", "horarios_paralelo_docente", "horarios_paralelo_grupo", "horarios_sesion",
-    "horarios_disponibilidad_docente", "horarios_bloqueo_sala", "horarios_sala_externa_autorizada",
-    "horarios_reserva_nivel", "horarios_perfil", "horarios_restriccion", "horarios_propuesta", "horarios_corrida",
-    "horarios_envio_horario", "finanzas_categoria", "finanzas_escenario", "finanzas_tarifa", "finanzas_presupuesto",
-    "finanzas_categoria_persona", "finanzas_nombramiento", "finanzas_calculo", "finanzas_calculo_detalle",
-    "proyeccion_inscripcion_historica", "proyeccion_estimacion_externa", "proyeccion_estimacion",
+    "identidad_departamento",
+    "identidad_usuario",
+    "identidad_rol",
+    "identidad_permiso",
+    "identidad_rol_permiso",
+    "plataforma_importacion",
+    "plataforma_fila_importada",
+    "plataforma_modulo",
+    "catalogo_periodo",
+    "catalogo_programa",
+    "catalogo_asignatura",
+    "catalogo_plan_nivel",
+    "catalogo_dia",
+    "catalogo_bloque",
+    "catalogo_sala",
+    "catalogo_persona",
+    "catalogo_docente",
+    "catalogo_ayudante",
+    "horarios_liga",
+    "horarios_paralelo",
+    "horarios_paralelo_docente",
+    "horarios_paralelo_grupo",
+    "horarios_sesion",
+    "horarios_disponibilidad_docente",
+    "horarios_bloqueo_sala",
+    "horarios_sala_externa_autorizada",
+    "horarios_reserva_nivel",
+    "horarios_perfil",
+    "horarios_restriccion",
+    "horarios_propuesta",
+    "horarios_corrida",
+    "horarios_envio_horario",
+    "finanzas_categoria",
+    "finanzas_escenario",
+    "finanzas_tarifa",
+    "finanzas_presupuesto",
+    "finanzas_categoria_persona",
+    "finanzas_nombramiento",
+    "finanzas_calculo",
+    "finanzas_calculo_detalle",
+    "proyeccion_inscripcion_historica",
+    "proyeccion_estimacion_externa",
+    "proyeccion_estimacion",
 ] + [f"sat_{g}_registro" for g in ("g1", "g2", "g3", "g4")]
 
 
 def triggers_borrado():
-    out = ["-- ---------------------------------------------------------------------",
-           "-- 8. Borrado lógico (generado por db/generar_esquema.py)",
-           "-- ---------------------------------------------------------------------",
-           "-- Nada se elimina de forma efectiva: el DELETE se rechaza (use eliminado_en)."]
+    out = [
+        "-- ---------------------------------------------------------------------",
+        "-- 8. Borrado lógico (generado por db/generar_esquema.py)",
+        "-- ---------------------------------------------------------------------",
+        "-- Nada se elimina de forma efectiva: el DELETE se rechaza (use eliminado_en).",
+    ]
     for t in SIN_BORRADO:
-        out.append(f"CREATE TRIGGER sin_borrado_{t} BEFORE DELETE ON {t}\n"
-                   f"BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en {t}'); END;")
+        out.append(
+            f"CREATE TRIGGER sin_borrado_{t} BEFORE DELETE ON {t}\n"
+            f"BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en {t}'); END;"
+        )
     out.append("")
     return "\n".join(out)
 

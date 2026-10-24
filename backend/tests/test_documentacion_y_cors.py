@@ -1,9 +1,9 @@
 """Documentación OpenAPI completa y CORS solo para los orígenes configurados."""
+
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 from .conftest import hacer_settings
 
@@ -16,7 +16,12 @@ def operaciones(client):
 
 
 def test_las_paginas_de_documentacion_responden(client):
-    assert client.get("/docs").status_code == client.get("/redoc").status_code == client.get("/openapi.json").status_code == 200
+    assert (
+        client.get("/docs").status_code
+        == client.get("/redoc").status_code
+        == client.get("/openapi.json").status_code
+        == 200
+    )
 
 
 def test_toda_operacion_tiene_resumen_y_descripcion(client):
@@ -34,7 +39,10 @@ def test_las_rutas_protegidas_documentan_sus_errores(client):
             assert "401" in o["responses"], f"{m} {p} no documenta el 401"
     login = spec["paths"]["/auth/login"]["post"]["responses"]
     assert {"200", "401", "403", "422", "423", "429"} <= set(login)
-    assert "403" in spec["paths"]["/salas"]["post"]["responses"] and "404" in spec["paths"]["/salas/{clave}"]["delete"]["responses"]
+    assert (
+        "403" in spec["paths"]["/salas"]["post"]["responses"]
+        and "404" in spec["paths"]["/salas/{clave}"]["delete"]["responses"]
+    )
     assert set(spec["paths"]["/health"]["get"]["responses"]) == {"200"}
 
 
@@ -60,7 +68,14 @@ def test_los_permisos_de_roles_se_cambian_con_el_configurador_y_no_con_la_api(cl
 
 
 def preflight(client, origen, metodo="POST", ruta="/auth/login", cabeceras="content-type,authorization"):
-    return client.options(ruta, headers={"Origin": origen, "Access-Control-Request-Method": metodo, "Access-Control-Request-Headers": cabeceras})
+    return client.options(
+        ruta,
+        headers={
+            "Origin": origen,
+            "Access-Control-Request-Method": metodo,
+            "Access-Control-Request-Headers": cabeceras,
+        },
+    )
 
 
 def test_sin_origenes_configurados_no_hay_cors(client):
@@ -72,7 +87,7 @@ def test_el_origen_configurado_puede_llamar_y_los_demas_no(directus):
     ok = preflight(c, ORIGEN)
     assert ok.status_code == 200 and ok.headers["access-control-allow-origin"] == ORIGEN
     assert "authorization" in ok.headers["access-control-allow-headers"].lower()
-    assert "access-control-allow-credentials" not in ok.headers          # se usa Authorization, no cookies
+    assert "access-control-allow-credentials" not in ok.headers  # se usa Authorization, no cookies
     assert "access-control-allow-origin" not in preflight(c, "http://sitio-ajeno.example").headers
     r = c.post("/auth/login", json={"email": "a@example.com", "clave": "x" * 14}, headers={"Origin": ORIGEN})
     assert r.status_code == 401 and r.headers["access-control-allow-origin"] == ORIGEN
@@ -85,5 +100,6 @@ def test_no_se_admite_comodin():
 
 def test_cors_se_lee_del_entorno(monkeypatch):
     from app.core.config import Settings
+
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000/, http://127.0.0.1:3000 ,")
     assert Settings().cors_origenes == ("http://localhost:3000", "http://127.0.0.1:3000")

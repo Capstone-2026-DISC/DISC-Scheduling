@@ -1,4 +1,5 @@
 """Pruebas del módulo de ejemplo con un Directus simulado (sin red)."""
+
 import json
 import sys
 from pathlib import Path
@@ -17,8 +18,14 @@ class DirectusFalso:
     def __init__(self):
         self.llamadas = []
         self.registros = [{"id": 1, "clave": "uno", "valor": None, "eliminado_en": None}]
-        self.prohibido = {("POST", "/items/pub_sala"), ("POST", "/items/sat_g2_registro"), ("GET", "/items/sat_g2_registro"),
-                          ("GET", "/items/catalogo_persona"), ("DELETE", "/items/sat_g1_registro/1"), ("GET", "/users")}
+        self.prohibido = {
+            ("POST", "/items/pub_sala"),
+            ("POST", "/items/sat_g2_registro"),
+            ("GET", "/items/sat_g2_registro"),
+            ("GET", "/items/catalogo_persona"),
+            ("DELETE", "/items/sat_g1_registro/1"),
+            ("GET", "/users"),
+        }
         self.rechazar_escritura = False
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
@@ -30,7 +37,9 @@ class DirectusFalso:
         if req.url.path == "/server/ping":
             return httpx.Response(200, text="pong")
         if req.method == "GET" and req.url.path == "/items/pub_sala":
-            return httpx.Response(200, json={"data": [{"id": 1, "codigo": "<script>alert(1)</script>", "capacidad": 20}]})
+            return httpx.Response(
+                200, json={"data": [{"id": 1, "codigo": "<script>alert(1)</script>", "capacidad": 20}]}
+            )
         if req.method == "GET" and req.url.path.startswith("/items/pub_"):
             return httpx.Response(200, json={"data": []})
         if req.method == "GET" and req.url.path == "/items/sat_g1_registro":
@@ -100,7 +109,7 @@ def test_eliminar_es_borrado_logico_y_nunca_un_delete(cliente, dir_):
 
 def test_los_limites_se_prueban_solo_al_pedirlo_y_todos_deben_ser_rechazados(cliente, dir_):
     cliente.get("/")
-    assert not any(m in ("POST", "DELETE") for m, *_ in dir_.llamadas)           # abrir la página no intenta nada riesgoso
+    assert not any(m in ("POST", "DELETE") for m, *_ in dir_.llamadas)  # abrir la página no intenta nada riesgoso
     r = cliente.post("/limites")
     assert r.text.count("rechazado, correcto") == 6 and "NO fue rechazado" not in r.text
 
@@ -113,6 +122,7 @@ def test_si_un_limite_no_se_cumple_se_marca_en_rojo(cliente, dir_):
 def test_sin_directus_la_aplicacion_sigue_respondiendo(tmp_path):
     def caido(req):
         raise httpx.ConnectError("sin red")
+
     c = TestClient(crear_app("http://directus", TOKEN, "g1", httpx.MockTransport(caido)))
     assert c.get("/").status_code == 200 and "sin conexión" in c.get("/").text
     assert c.get("/estado").json()["conectado"] is False
@@ -131,5 +141,6 @@ def test_abrir_la_pagina_cuesta_pocas_peticiones_para_no_agotar_el_limite_de_dir
 def test_si_directus_limita_las_peticiones_la_pagina_avisa(dir_):
     def limitado(req):
         return httpx.Response(429, json={"errors": [{"message": "Too many requests"}]})
+
     c = TestClient(crear_app("http://directus", TOKEN, "g1", httpx.MockTransport(limitado)))
     assert "limitó las peticiones" in c.get("/").text

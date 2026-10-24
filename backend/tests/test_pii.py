@@ -1,8 +1,8 @@
 """Cifrado del RUT y el correo: formato, claves, índice ciego, qué hay realmente en el archivo y en la auditoría."""
+
 import base64
 
 import pytest
-
 from app.core import pii
 from app.main import create_app
 
@@ -57,16 +57,16 @@ def test_indice_ciego_estable_normalizado_y_atado_a_la_clave(cif):
     assert cif.indice_rut("59.999.999-k") == cif.indice_rut("59999999-K") and len(cif.indice_rut(RUT)) == 64
     assert cif.indice_rut("59999998-1") != cif.indice_rut(RUT)
     otra = pii.Cifrador.desde_entorno(CLAVE_DATOS, "k1", k(b"D"))
-    assert otra.indice_rut(RUT) != cif.indice_rut(RUT)           # sin la clave no se puede recalcular el índice
+    assert otra.indice_rut(RUT) != cif.indice_rut(RUT)  # sin la clave no se puede recalcular el índice
 
 
 def test_claves_mal_formadas_no_arrancan():
     with pytest.raises(pii.ClaveFaltante):
         pii.Cifrador.desde_entorno("k1=corta", "k1", CLAVE_INDICE)
     with pytest.raises(pii.ClaveFaltante):
-        pii.Cifrador.desde_entorno(CLAVE_DATOS, "k9", CLAVE_INDICE)                       # id que no existe
+        pii.Cifrador.desde_entorno(CLAVE_DATOS, "k9", CLAVE_INDICE)  # id que no existe
     with pytest.raises(pii.ClaveFaltante):
-        pii.Cifrador.desde_entorno(CLAVE_DATOS, "k1", CLAVE_DATOS.split("=")[1])         # índice igual a la de cifrado
+        pii.Cifrador.desde_entorno(CLAVE_DATOS, "k1", CLAVE_DATOS.split("=")[1])  # índice igual a la de cifrado
     with pytest.raises(pii.ClaveFaltante):
         pii.Cifrador.desde_entorno("", "k1", CLAVE_INDICE)
 

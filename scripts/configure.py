@@ -1,10 +1,13 @@
 """Genera credenciales locales sin sobrescribir una configuración existente."""
-import os
-from pathlib import Path
+
 import base64
+import os
 import secrets
+from pathlib import Path
 
 target = Path(__file__).resolve().parents[1] / ".env"
+
+
 def clave32() -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
 

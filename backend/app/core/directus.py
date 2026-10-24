@@ -7,6 +7,7 @@ quién cambió qué. Hay dos formas de llamarlo:
   * con el token del servicio (cuenta de mínimos privilegios): tareas que no son de una persona, como crear
     usuarios, contar intentos de acceso, escribir la auditoría de eventos o leer para publicar a los satélites.
 """
+
 import json
 import re
 from dataclasses import dataclass
@@ -52,7 +53,7 @@ class Directus:
         if token:
             h["Authorization"] = f"Bearer {token}"
         if ip:
-            h["X-Forwarded-For"] = ip      # Directus lo usa para la IP de su registro de actividad
+            h["X-Forwarded-For"] = ip  # Directus lo usa para la IP de su registro de actividad
         return h
 
     def pedir(self, metodo: str, ruta: str, *, token: str | None = None, ip: str | None = None, **kw) -> Respuesta:
@@ -70,10 +71,20 @@ class Directus:
         return self.pedir(metodo, ruta, token=self.servicio, **kw)
 
     # -- items ---------------------------------------------------------------------------------------
-    def listar(self, coleccion: str, *, token: str | None, ip: str | None = None, filtro: dict | None = None,
-               campos: str = "*", limite: int = 100, desplazamiento: int = 0, orden: str | None = "id") -> Respuesta:
+    def listar(
+        self,
+        coleccion: str,
+        *,
+        token: str | None,
+        ip: str | None = None,
+        filtro: dict | None = None,
+        campos: str = "*",
+        limite: int = 100,
+        desplazamiento: int = 0,
+        orden: str | None = "id",
+    ) -> Respuesta:
         params = {"fields": campos, "limit": limite, "offset": desplazamiento}
-        if orden:                    # no todas las tablas tienen una columna id (catalogo_docente usa persona_id)
+        if orden:  # no todas las tablas tienen una columna id (catalogo_docente usa persona_id)
             params["sort"] = orden
         if filtro:
             params["filter"] = json.dumps(filtro)
@@ -93,7 +104,7 @@ def traducir(r: Respuesta, *, recurso: str = "", lectura_de_uno: bool = False) -
     if e == 401 or cod == "TOKEN_EXPIRED":
         return HTTPException(401, "Sesión inválida o vencida", headers={"WWW-Authenticate": "Bearer"})
     if e == 403:
-        if lectura_de_uno:      # Directus responde 403 también cuando la fila no existe o es de otro departamento
+        if lectura_de_uno:  # Directus responde 403 también cuando la fila no existe o es de otro departamento
             return HTTPException(404, "No encontrado")
         return HTTPException(403, "Sin permiso para esta operación")
     if e == 404:
@@ -101,18 +112,21 @@ def traducir(r: Respuesta, *, recurso: str = "", lectura_de_uno: bool = False) -
     if e == 429:
         return HTTPException(429, "Demasiadas peticiones a Directus; reintente en un minuto")
     if cod == "RECORD_NOT_UNIQUE":
-        return HTTPException(409, "Ya existe un registro con ese valor: " + re.sub(r'^Value ', "", msg)[:160])
+        return HTTPException(409, "Ya existe un registro con ese valor: " + re.sub(r"^Value ", "", msg)[:160])
     if cod == "FAILED_VALIDATION":
         if "departamento_id" in msg:
             return HTTPException(403, "Sin permiso para escribir en ese departamento")
         return HTTPException(422, msg[:300] or "Datos inválidos")
     m = _SQLITE.search(msg)
-    if m:                       # CHECK, FK, UNIQUE y los mensajes de los triggers del esquema (Directus los muestra solo a administradores)
+    if m:  # CHECK, FK, UNIQUE y los mensajes de los triggers del esquema (Directus los muestra solo a administradores)
         return HTTPException(409, f"No se pudo guardar: {m.group(1).strip()[:300]}")
     if e == 500 and cod == "INTERNAL_SERVER_ERROR":
         # Directus oculta el detalle a quien no es administrador: solo se sabe que la base rechazó el cambio
-        return HTTPException(409, "La base de datos rechazó el cambio porque no cumple una regla de integridad (por ejemplo un valor "
-                                  "fuera de lista, un código con minúsculas donde se exigen mayúsculas o una referencia que no existe).")
+        return HTTPException(
+            409,
+            "La base de datos rechazó el cambio porque no cumple una regla de integridad (por ejemplo un valor "
+            "fuera de lista, un código con minúsculas donde se exigen mayúsculas o una referencia que no existe).",
+        )
     if e == 400:
         return HTTPException(422, msg[:300] or "Petición inválida")
     return HTTPException(502, "Error al hablar con Directus")

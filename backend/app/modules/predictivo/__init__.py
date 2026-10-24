@@ -1,4 +1,5 @@
 """Módulo predictivo (esqueleto)."""
+
 from .router import router
 
 NOMBRE = "predictivo"

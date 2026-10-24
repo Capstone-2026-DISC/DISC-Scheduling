@@ -1,12 +1,13 @@
 """Validación de plantillas de importación. Cada problema dice la columna, qué falló y cómo corregirlo, con la forma
 que usa plataforma_fila_importada.errores: {columna, gravedad, falla, como_corregir}."""
+
 import csv
 import io
 import re
 from datetime import date
 
 from ..core.pii import normalizar_rut
-from .spec import PLANTILLAS, REF_DESTINO, Col, Plantilla
+from .spec import REF_DESTINO, Col, Plantilla
 
 PERIODO_RE = re.compile(r"^\d{4}(10|20)$")
 ASIG_RE = re.compile(r"^[A-Z]{4}-\d{5}$")
@@ -36,8 +37,11 @@ def _celda(col: Col, valor: str):
     """(valor normalizado, error|None). Un valor vacío es válido si la columna no es obligatoria."""
     if valor == "":
         if col.requerido:
-            return None, error(col.nombre, "Falta el valor, la columna es obligatoria.",
-                               f"Complete la columna «{col.nombre}». {col.regla}".strip())
+            return None, error(
+                col.nombre,
+                "Falta el valor, la columna es obligatoria.",
+                f"Complete la columna «{col.nombre}». {col.regla}".strip(),
+            )
         return None, None
     t = col.tipo
     try:
@@ -71,7 +75,7 @@ def _celda(col: Col, valor: str):
                 raise ValueError("el código es cuatro letras mayúsculas, guion y cinco dígitos")
             return valor, None
         if t == "rut":
-            v = normalizar_rut(valor)                        # acepta puntos, minúscula y la falta del guion
+            v = normalizar_rut(valor)  # acepta puntos, minúscula y la falta del guion
             if not RUT_RE.match(v):
                 raise ValueError("el RUT son siete u ocho dígitos, guion y dígito verificador")
             if dv_rut(v.split("-")[0]) != v[-1]:
@@ -83,7 +87,7 @@ def _celda(col: Col, valor: str):
     except ValueError as e:
         ejemplo = f" Ejemplo: {col.ejemplo}." if col.ejemplo else ""
         permitidos = f" Valores permitidos: {', '.join(col.valores)}." if col.valores else ""
-        visto = "" if col.es_pii else f" «{valor}»"           # un dato personal no se repite en el informe
+        visto = "" if col.es_pii else f" «{valor}»"  # un dato personal no se repite en el informe
         return None, error(col.nombre, f"Valor{visto} inválido: {e}.", f"Corrija «{col.nombre}».{permitidos}{ejemplo}")
 
 
@@ -113,15 +117,20 @@ def resolver(refs: Referencias, plantilla: Plantilla, datos: dict, cif=None) -> 
     codigo_depto = (datos.get(dcol.nombre) if dcol else None) or "DISC"
     dept = refs.departamento(codigo_depto)
     if dcol and dept is None:
-        errores.append(error(dcol.nombre, f"El departamento «{codigo_depto}» no existe o no tiene acceso a él.",
-                             "Use el código de un departamento creado, por ejemplo DISC."))
+        errores.append(
+            error(
+                dcol.nombre,
+                f"El departamento «{codigo_depto}» no existe o no tiene acceso a él.",
+                "Use el código de un departamento creado, por ejemplo DISC.",
+            )
+        )
     periodo_id = None
     for col in plantilla.columnas:
         valor = datos.get(col.nombre)
         dest = col.destino or REF_DESTINO.get(col.ref or "", col.nombre)
         if col.ref is None:
             if plantilla.coleccion == "catalogo_persona" and col.nombre in ("rut", "email"):
-                continue                                   # se cifran más abajo
+                continue  # se cifran más abajo
             if dest != "-" and valor is not None:
                 destino[dest] = valor
             continue
@@ -132,7 +141,13 @@ def resolver(refs: Referencias, plantilla: Plantilla, datos: dict, cif=None) -> 
         if col.ref == "periodo":
             periodo_id = refs.periodo(dept or 1, valor) if valor else None
             if valor and periodo_id is None:
-                errores.append(error(col.nombre, f"El periodo {valor} no existe.", "Cargue primero la plantilla catalogo_periodo, o corrija el código."))
+                errores.append(
+                    error(
+                        col.nombre,
+                        f"El periodo {valor} no existe.",
+                        "Cargue primero la plantilla catalogo_periodo, o corrija el código.",
+                    )
+                )
             elif dest != "-" and periodo_id is not None:
                 destino[dest] = periodo_id
             continue
@@ -140,35 +155,66 @@ def resolver(refs: Referencias, plantilla: Plantilla, datos: dict, cif=None) -> 
             continue
         if col.ref == "persona_rut":
             if cif is None:
-                continue                                   # sin las claves no se puede ubicar a la persona
+                continue  # sin las claves no se puede ubicar a la persona
             pid = refs.persona(valor)
             if pid is None:
-                errores.append(error(col.nombre, f"No hay una persona con RUT {valor}.", "Cargue primero la plantilla catalogo_persona, o corrija el RUT."))
+                errores.append(
+                    error(
+                        col.nombre,
+                        f"No hay una persona con RUT {valor}.",
+                        "Cargue primero la plantilla catalogo_persona, o corrija el RUT.",
+                    )
+                )
             elif dest == "docente_id" and not refs.es_docente(pid):
-                errores.append(error(col.nombre, f"La persona {valor} no es docente.", "Cargue primero la plantilla catalogo_docente."))
+                errores.append(
+                    error(
+                        col.nombre,
+                        f"La persona {valor} no es docente.",
+                        "Cargue primero la plantilla catalogo_docente.",
+                    )
+                )
             else:
                 destino[dest] = pid
         elif col.ref == "asignatura":
             aid = refs.asignatura(valor)
             if aid is None:
-                errores.append(error(col.nombre, f"No existe la asignatura {valor}.", "Cargue primero la plantilla catalogo_asignatura, o corrija el código."))
+                errores.append(
+                    error(
+                        col.nombre,
+                        f"No existe la asignatura {valor}.",
+                        "Cargue primero la plantilla catalogo_asignatura, o corrija el código.",
+                    )
+                )
             else:
                 destino[dest] = aid
         elif col.ref == "paralelo_nrc":
             pid = refs.paralelo(valor, periodo_id)
             if pid is None:
-                errores.append(error(col.nombre, f"No existe un paralelo con NRC {valor} en ese periodo.", "Cargue primero la plantilla horarios_paralelo, o corrija el NRC."))
+                errores.append(
+                    error(
+                        col.nombre,
+                        f"No existe un paralelo con NRC {valor} en ese periodo.",
+                        "Cargue primero la plantilla horarios_paralelo, o corrija el NRC.",
+                    )
+                )
             else:
                 destino[dest] = pid
         elif col.ref == "categoria_letra":
             letra = (datos.get("letra") or "").upper()
             cid = refs.categoria(valor, letra)
             if cid is None:
-                errores.append(error("letra", f"No existe la categoría {valor} letra «{letra}».", "Use una letra de categoría existente (A a D para profesor_hora, A a C para ayudante)."))
+                errores.append(
+                    error(
+                        "letra",
+                        f"No existe la categoría {valor} letra «{letra}».",
+                        "Use una letra de categoría existente (A a D para profesor_hora, A a C para ayudante).",
+                    )
+                )
             else:
                 destino[dest] = cid
     if cif is not None and plantilla.coleccion == "catalogo_persona":
         from ..core import pii
+
         if datos.get("rut"):
             destino["rut_cifrado"] = cif.cifrar(pii.normalizar_rut(datos["rut"]), pii.COL_RUT)
             destino["rut_indice"] = cif.indice_rut(datos["rut"])
@@ -186,13 +232,27 @@ def validar(plantilla: Plantilla, texto: str, refs: Referencias | None = None, c
     faltan = [c for c in esperados if c not in encabezados]
     sobran = [c for c in encabezados if c not in esperados]
     if faltan:
-        general.append(error(",".join(faltan), f"Faltan columnas: {', '.join(faltan)}.", "Use la plantilla oficial sin quitar encabezados."))
+        general.append(
+            error(
+                ",".join(faltan),
+                f"Faltan columnas: {', '.join(faltan)}.",
+                "Use la plantilla oficial sin quitar encabezados.",
+            )
+        )
     if sobran:
-        general.append(error(",".join(sobran), f"Columnas desconocidas: {', '.join(sobran)}.", "Quítelas o corrija el nombre; los encabezados deben coincidir con la plantilla."))
+        general.append(
+            error(
+                ",".join(sobran),
+                f"Columnas desconocidas: {', '.join(sobran)}.",
+                "Quítelas o corrija el nombre; los encabezados deben coincidir con la plantilla.",
+            )
+        )
     if not filas and not general:
-        general.append(error("", "El archivo no tiene filas de datos.", "Agregue al menos una fila debajo del encabezado."))
+        general.append(
+            error("", "El archivo no tiene filas de datos.", "Agregue al menos una fila debajo del encabezado.")
+        )
     forma = []
-    for n, fila in enumerate(filas, start=2):                 # la fila 1 es el encabezado
+    for n, fila in enumerate(filas, start=2):  # la fila 1 es el encabezado
         errores, datos = [], {}
         if not faltan:
             for col in plantilla.columnas:
@@ -210,29 +270,50 @@ def validar(plantilla: Plantilla, texto: str, refs: Referencias | None = None, c
             destino, e_ref = resolver(refs, plantilla, datos, cif)
             errores += e_ref
             # la clave de una persona es su índice ciego; sin las claves esa comprobación no se puede hacer
-            comprobable = cif is not None or not any(c.es_pii for c in plantilla.columnas if c.nombre in plantilla.clave)
+            comprobable = cif is not None or not any(
+                c.es_pii for c in plantilla.columnas if c.nombre in plantilla.clave
+            )
             if not e_ref and comprobable:
                 clave_db = {}
                 for c in plantilla.columnas:
                     if c.nombre not in plantilla.clave or (c.destino or "") == "-":
                         continue
-                    dest = "rut_indice" if plantilla.coleccion == "catalogo_persona" and c.nombre == "rut" else (
-                        c.destino or REF_DESTINO.get(c.ref or "", c.nombre))
+                    dest = (
+                        "rut_indice"
+                        if plantilla.coleccion == "catalogo_persona" and c.nombre == "rut"
+                        else (c.destino or REF_DESTINO.get(c.ref or "", c.nombre))
+                    )
                     if dest in destino:
                         clave_db[dest] = destino[dest]
                 if clave_db and refs.existe(plantilla.tabla_db, clave_db):
-                    errores.append(error(",".join(plantilla.clave), "Ya existe una fila con esa clave en la base.",
-                                         "Quite la fila: la importación solo agrega, no actualiza."))
+                    errores.append(
+                        error(
+                            ",".join(plantilla.clave),
+                            "Ya existe una fila con esa clave en la base.",
+                            "Quite la fila: la importación solo agrega, no actualiza.",
+                        )
+                    )
         if not errores:
             k = tuple(datos.get(c) for c in plantilla.clave)
             if k in vistas:
-                errores.append(error(",".join(plantilla.clave), f"Repite la clave de la fila {vistas[k]}.", "Deje una sola fila por clave."))
+                errores.append(
+                    error(
+                        ",".join(plantilla.clave),
+                        f"Repite la clave de la fila {vistas[k]}.",
+                        "Deje una sola fila por clave.",
+                    )
+                )
             else:
                 vistas[k] = n
         resultado.append({"fila": n, "datos": datos, "destino": destino, "errores": errores})
     con_error = sum(1 for f in resultado if f["errores"])
-    return {"coleccion": plantilla.coleccion, "ok": not general and con_error == 0, "errores_generales": general,
-            "filas": resultado, "resumen": {"filas": len(resultado), "con_errores": con_error, "validas": len(resultado) - con_error}}
+    return {
+        "coleccion": plantilla.coleccion,
+        "ok": not general and con_error == 0,
+        "errores_generales": general,
+        "filas": resultado,
+        "resumen": {"filas": len(resultado), "con_errores": con_error, "validas": len(resultado) - con_error},
+    }
 
 
 def formatear(informe: dict) -> str:

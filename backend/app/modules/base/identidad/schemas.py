@@ -6,14 +6,26 @@ class Base(BaseModel):
 
 
 class LoginIn(Base):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"email": "usuario.prueba@example.com", "clave": "su-clave"}]})
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"examples": [{"email": "usuario.prueba@example.com", "clave": "su-clave"}]}
+    )
     email: str = Field(min_length=3, max_length=254)
     clave: str = Field(min_length=1, max_length=256)
 
 
 class TokenOut(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{
-        "access_token": "eyJhbGciOiJIUzI1NiIs…", "refresh_token": "d4f1…", "token_type": "bearer", "expires_in": 600}]})
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "access_token": "eyJhbGciOiJIUzI1NiIs…",
+                    "refresh_token": "d4f1…",
+                    "token_type": "bearer",
+                    "expires_in": 600,
+                }
+            ]
+        }
+    )
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -43,13 +55,23 @@ class UsuarioIn(Base):
 
 class RolAsignacionIn(Base):
     rol: str = Field(min_length=1, max_length=60)
-    departamento_id: int | None = None     # nulo = todos los departamentos
+    departamento_id: int | None = None  # nulo = todos los departamentos
 
 
 class PerfilOut(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{
-        "id": 2, "email": "usuario.prueba@example.com", "nombre": "Usuario de prueba", "rol": "consulta",
-        "permisos": {"catalogo.ver": [1], "horarios.ver": [1], "restricciones.ver": [1]}}]})
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": 2,
+                    "email": "usuario.prueba@example.com",
+                    "nombre": "Usuario de prueba",
+                    "rol": "consulta",
+                    "permisos": {"catalogo.ver": [1], "horarios.ver": [1], "restricciones.ver": [1]},
+                }
+            ]
+        }
+    )
     id: int | None
     email: str
     nombre: str

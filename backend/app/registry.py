@@ -1,6 +1,7 @@
 """Registro de módulos por configuración: MODULES=base,financiero,predictivo.
 Cada módulo es un paquete que expone `router` y `NOMBRE`; el núcleo compartido (auth, contexto de usuario en la
 conexión y auditoría) vive en app.core y lo usan todos."""
+
 from importlib import import_module
 
 DISPONIBLES = {

@@ -1,5 +1,6 @@
 """Caché pequeña con vencimiento, segura entre hilos. Evita repetir en cada petición las consultas que casi no cambian
 (quién es el dueño de un token, qué permisos tiene un rol)."""
+
 import threading
 import time
 

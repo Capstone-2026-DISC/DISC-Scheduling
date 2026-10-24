@@ -10,6 +10,7 @@ queda legible para Directus.
   de cifrado. Sin esa clave no se puede recalcular el índice ni probar RUT al azar contra la base.
 * Varias claves de cifrado conviven (DATA_KEYS) para rotar: se cifra con DATA_KEY_ID y se descifra con cualquiera.
 """
+
 import base64
 import hashlib
 import hmac
@@ -65,7 +66,7 @@ def _desde_b64(texto: str) -> bytes:
 def _clave(valor: str, nombre: str) -> bytes:
     try:
         clave = _desde_b64(valor.strip())
-    except Exception as exc:                                     # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         raise ClaveFaltante(f"{nombre} no es base64 válido") from exc
     if len(clave) != 32:
         raise ClaveFaltante(f"{nombre} debe ser de 32 bytes en base64 (genere una con scripts/configure.py)")
@@ -123,4 +124,8 @@ class Cifrador:
 
 
 # columnas que se cifran; la clave es el nombre de la columna cifrada (también sirve como dato autenticado)
-COL_RUT, COL_EMAIL, COL_EMAIL_ENVIO = "catalogo_persona.rut", "catalogo_persona.email", "horarios_envio_horario.email_destino"
+COL_RUT, COL_EMAIL, COL_EMAIL_ENVIO = (
+    "catalogo_persona.rut",
+    "catalogo_persona.email",
+    "horarios_envio_horario.email_destino",
+)

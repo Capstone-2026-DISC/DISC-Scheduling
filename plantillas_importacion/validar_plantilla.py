@@ -4,6 +4,7 @@
 Uso: python3 plantillas_importacion/validar_plantilla.py COLECCION archivo.csv [--json]
 Solo revisa la forma de cada celda (tipos, rangos, listas cerradas, RUT con dígito verificador, claves repetidas dentro del
 archivo). Las referencias a otras tablas y los duplicados contra la base los comprueba la API: POST /importaciones/{coleccion}."""
+
 import argparse
 import json
 import sys
@@ -18,7 +19,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("coleccion", choices=sorted(PLANTILLAS))
     ap.add_argument("archivo", type=Path)
-    ap.add_argument("--json", action="store_true", help="salida como JSON con la forma de plataforma_fila_importada.errores")
+    ap.add_argument(
+        "--json", action="store_true", help="salida como JSON con la forma de plataforma_fila_importada.errores"
+    )
     a = ap.parse_args(argv)
     try:
         texto = a.archivo.read_text(encoding="utf-8")

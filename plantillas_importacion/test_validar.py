@@ -39,7 +39,10 @@ def test_cada_error_dice_columna_falla_y_como_corregir():
     informe = validar(PLANTILLAS["catalogo_persona"], texto)
     assert not informe["ok"] and informe["resumen"] == {"filas": 4, "con_errores": 3, "validas": 1}
     errores = [e for f in informe["filas"] for e in f["errores"]]
-    assert all(set(e) == {"columna", "gravedad", "falla", "como_corregir"} and e["falla"] and e["como_corregir"] for e in errores)
+    assert all(
+        set(e) == {"columna", "gravedad", "falla", "como_corregir"} and e["falla"] and e["como_corregir"]
+        for e in errores
+    )
     assert any("dígito verificador" in e["falla"] and "K" in e["falla"] for e in errores)
     assert any("Repite la clave de la fila 4" in e["falla"] for e in errores)
 
@@ -51,8 +54,7 @@ def test_encabezados_distintos_se_explican():
 
 
 def test_enumerados_y_rangos():
-    texto = ("departamento,codigo,nombre,capacidad,es_laboratorio,administrada_por,activa\n"
-             ",ZZ-1,Sala,0,2,disc,1\n")
+    texto = "departamento,codigo,nombre,capacidad,es_laboratorio,administrada_por,activa\n" ",ZZ-1,Sala,0,2,disc,1\n"
     informe = validar(PLANTILLAS["catalogo_sala"], texto)
     columnas = {e["columna"] for f in informe["filas"] for e in f["errores"]}
     assert columnas == {"capacidad", "es_laboratorio"}
@@ -60,44 +62,77 @@ def test_enumerados_y_rangos():
 
 class ReferenciasDePrueba:
     """Un Directus de juguete: periodos, personas y duplicados en memoria."""
+
     def __init__(self):
         self.periodos = {(1, "202620"): 1}
         self.personas = {}
         self.filas = set()
 
-    def departamento(self, codigo): return {"DISC": 1}.get(codigo.upper())
-    def periodo(self, departamento_id, codigo): return self.periodos.get((departamento_id, codigo))
-    def persona(self, rut): return self.personas.get(rut)
-    def es_docente(self, persona_id): return False
-    def asignatura(self, codigo): return None
-    def paralelo(self, nrc, periodo_id): return None
-    def categoria(self, tipo, letra): return None
-    def precargar(self, plantilla, filas): pass
-    def existe(self, tabla, filtros): return (tabla, tuple(sorted(filtros.items()))) in self.filas
+    def departamento(self, codigo):
+        return {"DISC": 1}.get(codigo.upper())
+
+    def periodo(self, departamento_id, codigo):
+        return self.periodos.get((departamento_id, codigo))
+
+    def persona(self, rut):
+        return self.personas.get(rut)
+
+    def es_docente(self, persona_id):
+        return False
+
+    def asignatura(self, codigo):
+        return None
+
+    def paralelo(self, nrc, periodo_id):
+        return None
+
+    def categoria(self, tipo, letra):
+        return None
+
+    def precargar(self, plantilla, filas):
+        pass
+
+    def existe(self, tabla, filtros):
+        return (tabla, tuple(sorted(filtros.items()))) in self.filas
 
 
 def test_referencias_y_duplicados_contra_la_base():
     import base64
+
     from app.core.pii import Cifrador
-    b64 = lambda b: base64.urlsafe_b64encode(b * 32).decode().rstrip("=")      # noqa: E731
+
+    b64 = lambda b: base64.urlsafe_b64encode(b * 32).decode().rstrip("=")  # noqa: E731
     cif = Cifrador.desde_entorno("k1=" + b64(b"A"), "k1", b64(b"B"))
     refs = ReferenciasDePrueba()
     refs.filas.add(("catalogo_periodo", (("codigo", "202620"), ("departamento_id", 1))))
-    ok = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202710,,,\n", refs)
+    ok = validar(
+        PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202710,,,\n", refs
+    )
     assert ok["ok"]
-    dup = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202620,,,\n", refs)
+    dup = validar(
+        PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202620,,,\n", refs
+    )
     assert "Ya existe" in dup["filas"][0]["errores"][0]["falla"]
     docente = "rut,departamento,tipo_contrato,activo\n59999999-K,,hora,1\n"
     # sin las claves no se puede ubicar a la persona: se revisa la forma y no se inventan errores
     assert validar(PLANTILLAS["catalogo_docente"], docente, refs)["ok"]
     sin_persona = validar(PLANTILLAS["catalogo_docente"], docente, refs, cif)
-    assert "No hay una persona" in sin_persona["filas"][0]["errores"][0]["falla"] and "catalogo_persona" in sin_persona["filas"][0]["errores"][0]["como_corregir"]
-    sin_periodo = validar(PLANTILLAS["horarios_sesion"], "periodo,departamento,nrc,numero,duracion_bloques\n209910,,1,1,1\n", refs)
+    assert (
+        "No hay una persona" in sin_persona["filas"][0]["errores"][0]["falla"]
+        and "catalogo_persona" in sin_persona["filas"][0]["errores"][0]["como_corregir"]
+    )
+    sin_periodo = validar(
+        PLANTILLAS["horarios_sesion"], "periodo,departamento,nrc,numero,duracion_bloques\n209910,,1,1,1\n", refs
+    )
     assert "no existe" in sin_periodo["filas"][0]["errores"][0]["falla"]
 
 
 def test_la_linea_de_comandos_devuelve_codigo_segun_el_resultado(tmp_path):
-    bueno = subprocess.run([sys.executable, str(CLI), "catalogo_persona", str(AQUI / "csv" / "catalogo_persona.csv")], capture_output=True, text=True)
+    bueno = subprocess.run(
+        [sys.executable, str(CLI), "catalogo_persona", str(AQUI / "csv" / "catalogo_persona.csv")],
+        capture_output=True,
+        text=True,
+    )
     assert bueno.returncode == 0 and "0 con errores" in bueno.stdout
     malo = tmp_path / "malo.csv"
     malo.write_text("rut,nombre,email\n123,X,y\n", encoding="utf-8")

@@ -2,10 +2,9 @@ import base64
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.core.config import Settings
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 from .falso import DirectusFalso
 
@@ -18,9 +17,18 @@ PRUEBA = "usuario.prueba@example.com"
 
 
 def hacer_settings(**cambios) -> Settings:
-    base = dict(directus_url="http://directus.test", servicio_token="s" * 40, data_keys=CLAVE_DATOS, data_key_id="k1",
-                index_key=CLAVE_INDICE, intentos_maximos=3, bloqueo_minutos=15, login_por_minuto_ip=1000,
-                modulos=("base", "financiero", "predictivo"), cors_origenes=())
+    base = dict(
+        directus_url="http://directus.test",
+        servicio_token="s" * 40,
+        data_keys=CLAVE_DATOS,
+        data_key_id="k1",
+        index_key=CLAVE_INDICE,
+        intentos_maximos=3,
+        bloqueo_minutos=15,
+        login_por_minuto_ip=1000,
+        modulos=("base", "financiero", "predictivo"),
+        cors_origenes=(),
+    )
     base.update(cambios)
     return Settings(**base)
 

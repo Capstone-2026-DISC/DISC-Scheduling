@@ -6,14 +6,18 @@ Se hace por Directus, con la cuenta de administración (ADMIN_EMAIL y ADMIN_PASS
 Las filas crudas de importaciones no se rotan: se anonimizan al cerrar el periodo.
 El índice ciego del RUT depende de INDEX_KEY: cambiarla obliga a recalcular todos los índices (no lo hace este script).
 """
+
 import os
 
 from .core import pii
 from .core.config import get_settings
 from .core.directus import Directus, exigir
 
-COLUMNAS = (("catalogo_persona", "rut_cifrado", pii.COL_RUT), ("catalogo_persona", "email_cifrado", pii.COL_EMAIL),
-            ("horarios_envio_horario", "email_destino_cifrado", pii.COL_EMAIL_ENVIO))
+COLUMNAS = (
+    ("catalogo_persona", "rut_cifrado", pii.COL_RUT),
+    ("catalogo_persona", "email_cifrado", pii.COL_EMAIL),
+    ("horarios_envio_horario", "email_destino_cifrado", pii.COL_EMAIL_ENVIO),
+)
 
 
 def rotar(d: Directus, token: str, cif: pii.Cifrador) -> dict:
@@ -25,7 +29,9 @@ def rotar(d: Directus, token: str, cif: pii.Cifrador) -> dict:
             valor = f.get(col)
             if not valor or valor.split(":", 2)[1] == cif.clave_actual:
                 continue
-            exigir(d.pedir("PATCH", f"/items/{coleccion}/{f['id']}", token=token, json={col: cif.recifrar(valor, nombre)}))
+            exigir(
+                d.pedir("PATCH", f"/items/{coleccion}/{f['id']}", token=token, json={col: cif.recifrar(valor, nombre)})
+            )
             n += 1
         cuenta[f"{coleccion}.{col}"] = n
     return cuenta
@@ -34,7 +40,13 @@ def rotar(d: Directus, token: str, cif: pii.Cifrador) -> dict:
 def main() -> None:
     s = get_settings()
     d = Directus(s.directus_url, s.servicio_token)
-    r = exigir(d.pedir("POST", "/auth/login", json={"email": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"], "mode": "json"}))
+    r = exigir(
+        d.pedir(
+            "POST",
+            "/auth/login",
+            json={"email": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"], "mode": "json"},
+        )
+    )
     print("recifrado con", s.data_key_id, rotar(d, r.datos["access_token"], s.cifrador()))
 
 

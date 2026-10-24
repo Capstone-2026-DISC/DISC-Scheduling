@@ -1,4 +1,5 @@
 """Módulo base: núcleo de identidad, catálogo y horarios."""
+
 from fastapi import APIRouter
 
 from .catalogo.router import router as catalogo
