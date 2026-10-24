@@ -72,6 +72,12 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Instalar dependencias
         run: pip install -r backend/requirements-dev.txt
+      - name: Instalar fet-cl (motor FET) para sus pruebas
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/fet.tar.gz" https://github.com/nico-alvz/fet-mirror/releases/download/v7.10.5/fet-cl-7.10.5-linux-x86_64.tar.gz
+          echo "217ef8f978aeb2df8c7cda3bcb5accb185db3b86fb7f329729d4f93d96bd053c  $RUNNER_TEMP/fet.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/fet" && tar xzf "$RUNNER_TEMP/fet.tar.gz" -C "$RUNNER_TEMP/fet" --strip-components=1
+          echo "FET_CL=$RUNNER_TEMP/fet/bin/fet-cl" >> "$GITHUB_ENV"
       - name: Esquema de la base (generado al día y sus pruebas)
         run: |
           python db/generar_esquema.py | diff - db/esquema_plataforma.sql
