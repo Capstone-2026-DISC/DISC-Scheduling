@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["frontend", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "N", "UP"]
+ignore = [
+    "B008",  # Depends() y Query() como valores por defecto son el idioma de FastAPI
+    "N818",  # las excepciones del dominio no llevan el sufijo Error
+    "E501",  # ruff format ajusta el código; los comentarios y textos largos se dejan al criterio de quien revisa
+]
