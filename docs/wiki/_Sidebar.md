@@ -14,8 +14,10 @@
 **Integración**
 - [Satélites](Satelites.md)
 - [Importación](Importacion.md)
+- [Motores de horarios](Motores-de-horarios.md)
 
 **Equipo**
 - [Flujo de trabajo](Flujo-de-trabajo.md)
 - [Pruebas y CI](Pruebas-y-CI.md)
+- [Patrones de diseño](Patrones-de-diseno.md)
 - [Límites conocidos](Limites-conocidos.md)

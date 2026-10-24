@@ -13,7 +13,8 @@ Guarda la oferta académica y el gasto docente del departamento, aplica permisos
 | Probar la API con Swagger o `curl` | [Probar la API](Probar-la-API.md) |
 | Conectar un módulo de Proyecto Integrador | [Satélites](Satelites.md) |
 | Cargar datos desde CSV | [Importación](Importacion.md) |
-| Aportar al código | [Flujo de trabajo](Flujo-de-trabajo.md) y [Pruebas y CI](Pruebas-y-CI.md) |
+| Entender los motores FET y CP-SAT | [Motores de horarios](Motores-de-horarios.md) |
+| Aportar al código | [Flujo de trabajo](Flujo-de-trabajo.md), [Pruebas y CI](Pruebas-y-CI.md) y [Patrones de diseño](Patrones-de-diseno.md) |
 
 ## Seguridad
 
