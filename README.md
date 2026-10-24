@@ -45,8 +45,8 @@ Los servicios `migrar` y `configurar` corren una vez: el primero crea la base de
 
 | Servicio | Puerto | Para qué |
 | --- | --- | --- |
+| `api` | 8000 | API en FastAPI. Documentación interactiva en http://localhost:8000/docs |
 | `frontend` | 3000 | Interfaz web |
-| `api` | 8000 | API. Documentación interactiva en `/docs` |
 | `directus` | 8055 | Único acceso a los datos, también para los módulos de Proyecto Integrador. Cuenta de emergencia con `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env` |
 | `modulo-simulado` | 8090 | Módulo de ejemplo, solo con el perfil `demo` |
 
@@ -64,6 +64,33 @@ Todos los puertos escuchan solo en `127.0.0.1`.
 **Detener.** `docker compose down` conserva los datos. `docker compose down -v` los borra.
 
 **Antes de usar datos reales.** El tráfico va por HTTP y la base no está cifrada en disco. Para exponerlo en la red hay que poner HTTPS delante (por ejemplo Caddy con una CA interna) y cifrar el volumen del servidor. Mientras tanto, úsese con los datos de prueba de `datos_prueba/`.
+
+## Probar la API
+
+Con el stack arriba, FastAPI publica su documentación en:
+
+| Dirección | Qué es |
+| --- | --- |
+| http://localhost:8000/docs | Swagger UI: lista todos los endpoints y permite probarlos desde el navegador |
+| http://localhost:8000/redoc | La misma documentación en lectura |
+| http://localhost:8000/openapi.json | El contrato OpenAPI, para generar clientes |
+| http://localhost:8000/health | Estado del servicio |
+
+Para probar un endpoint protegido desde Swagger UI:
+
+1. Abra `POST /auth/login`, pulse «Try it out» y envíe `{"email": "usuario.prueba@example.com", "clave": "<SEED_TEST_PASSWORD del .env>"}`.
+2. Copie el `access_token` de la respuesta (dura 10 minutos; `POST /auth/refresh` entrega otro).
+3. Pulse «Authorize» arriba a la derecha, pegue el token y confirme. Desde ahí `GET /salas`, `GET /periodos` y el resto de las lecturas responden con los permisos de ese usuario.
+
+Lo mismo con `curl`:
+
+```bash
+TOKEN=$(curl -s localhost:8000/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"usuario.prueba@example.com","clave":"<SEED_TEST_PASSWORD>"}' | jq -r .access_token)
+curl -s localhost:8000/salas -H "Authorization: Bearer $TOKEN"
+```
+
+El usuario de prueba solo lee. Para crear o modificar datos, entre con `encargado.docente@example.com` y `SEED_ADMIN_PASSWORD`.
 
 ## Módulo de prueba
 
@@ -105,7 +132,18 @@ cd .. && python db/probar_esquema.py db/esquema_plataforma.sql
 cd backend && python -m pytest -q tests_integracion      # con el stack arriba (docker compose up)
 ```
 
-El CI repite esas pruebas, levanta todo con Docker Compose, comprueba los permisos reales de Directus, corre las pruebas de integración, el frontend y el módulo de ejemplo, y construye las imágenes.
+Antes de subir cambios, `ruff check .` y `ruff format --check .` (configurados en `pyproject.toml`) deben pasar.
+
+El CI corre en cuatro etapas, y cada una espera a la anterior:
+
+| Etapa | Qué revisa |
+| --- | --- |
+| 1. Estilo, secretos y frontend | `ruff`, búsqueda de claves en el historial con gitleaks, y compilación del frontend |
+| 2. Esquema, permisos y pruebas unitarias | Esquema y matriz de permisos generados al día, pruebas de la API, de los datos de prueba y de las plantillas |
+| 3. Integración con el stack real | Levanta Directus, API, frontend y el módulo de ejemplo con Docker Compose; comprueba los permisos reales y corre las pruebas de integración |
+| 4. Imágenes | Construye las imágenes de la API y del frontend; solo se publican desde `main` |
+
+Además, cada pull request revisa que venga de la rama que corresponde y que su título siga el formato de commits convencionales (`feat(api): add room listing`). Dependabot propone las actualizaciones de dependencias cada semana.
 
 ## Estructura
 
