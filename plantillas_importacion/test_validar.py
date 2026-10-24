@@ -1,4 +1,3 @@
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -59,25 +58,41 @@ def test_enumerados_y_rangos():
     assert columnas == {"capacidad", "es_laboratorio"}
 
 
-def test_referencias_y_duplicados_contra_la_base(tmp_path):
-    esquema = AQUI.parent / "db" / "esquema_plataforma.sql"
-    con = sqlite3.connect(":memory:")
-    con.executescript(esquema.read_text(encoding="utf-8"))
-    con.execute("INSERT INTO catalogo_periodo (codigo) VALUES ('202620')")
-    ok = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202710,,,\n", con)
-    assert ok["ok"]
-    dup = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202620,,,\n", con)
-    assert "Ya existe" in dup["filas"][0]["errores"][0]["falla"]
+class ReferenciasDePrueba:
+    """Un Directus de juguete: periodos, personas y duplicados en memoria."""
+    def __init__(self):
+        self.periodos = {(1, "202620"): 1}
+        self.personas = {}
+        self.filas = set()
+
+    def departamento(self, codigo): return {"DISC": 1}.get(codigo.upper())
+    def periodo(self, departamento_id, codigo): return self.periodos.get((departamento_id, codigo))
+    def persona(self, rut): return self.personas.get(rut)
+    def es_docente(self, persona_id): return False
+    def asignatura(self, codigo): return None
+    def paralelo(self, nrc, periodo_id): return None
+    def categoria(self, tipo, letra): return None
+    def precargar(self, plantilla, filas): pass
+    def existe(self, tabla, filtros): return (tabla, tuple(sorted(filtros.items()))) in self.filas
+
+
+def test_referencias_y_duplicados_contra_la_base():
     import base64
     from app.core.pii import Cifrador
     b64 = lambda b: base64.urlsafe_b64encode(b * 32).decode().rstrip("=")      # noqa: E731
     cif = Cifrador.desde_entorno("k1=" + b64(b"A"), "k1", b64(b"B"))
+    refs = ReferenciasDePrueba()
+    refs.filas.add(("catalogo_periodo", (("codigo", "202620"), ("departamento_id", 1))))
+    ok = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202710,,,\n", refs)
+    assert ok["ok"]
+    dup = validar(PLANTILLAS["catalogo_periodo"], "departamento,codigo,fecha_inicio,fecha_fin,estado\n,202620,,,\n", refs)
+    assert "Ya existe" in dup["filas"][0]["errores"][0]["falla"]
     docente = "rut,departamento,tipo_contrato,activo\n59999999-K,,hora,1\n"
     # sin las claves no se puede ubicar a la persona: se revisa la forma y no se inventan errores
-    assert validar(PLANTILLAS["catalogo_docente"], docente, con)["ok"]
-    sin_dep = validar(PLANTILLAS["catalogo_docente"], docente, con, cif)
-    assert "No hay una persona" in sin_dep["filas"][0]["errores"][0]["falla"] and "catalogo_persona" in sin_dep["filas"][0]["errores"][0]["como_corregir"]
-    sin_periodo = validar(PLANTILLAS["horarios_sesion"], "periodo,departamento,nrc,numero,duracion_bloques\n209910,,1,1,1\n", con)
+    assert validar(PLANTILLAS["catalogo_docente"], docente, refs)["ok"]
+    sin_persona = validar(PLANTILLAS["catalogo_docente"], docente, refs, cif)
+    assert "No hay una persona" in sin_persona["filas"][0]["errores"][0]["falla"] and "catalogo_persona" in sin_persona["filas"][0]["errores"][0]["como_corregir"]
+    sin_periodo = validar(PLANTILLAS["horarios_sesion"], "periodo,departamento,nrc,numero,duracion_bloques\n209910,,1,1,1\n", refs)
     assert "no existe" in sin_periodo["filas"][0]["errores"][0]["falla"]
 
 

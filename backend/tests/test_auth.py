@@ -1,146 +1,138 @@
+"""Inicio de sesión, renovación, cierre y cambio de clave sobre Directus (simulado)."""
 import time
 
-import jwt
+import httpx
+from fastapi.testclient import TestClient
 
-from app.core import security
-from app.seed import ADMIN_EMAIL, PRUEBA_EMAIL
+from app.main import create_app
 
-from .conftest import CLAVE_ADMIN, cabecera, entrar, hacer_settings
-
-
-def auditoria(db, accion, resultado=None):
-    q = "SELECT * FROM plataforma_auditoria WHERE accion = ?"
-    p = [accion]
-    if resultado:
-        q += " AND resultado = ?"
-        p.append(resultado)
-    return [dict(f) for f in db.execute(q + " ORDER BY id", p)]
+from .conftest import ADMIN, CLAVE_ADMIN, CLAVE_PRUEBA, PRUEBA, cabecera, entrar, eventos, hacer_settings
+from .falso import DirectusFalso
 
 
-def test_login_correcto_audita_usuario_ip_y_fecha(client, db):
-    tokens = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
-    assert tokens["token_type"] == "bearer" and tokens["expires_in"] == 600
-    fila = auditoria(db, "login", "ok")[0]
-    assert fila["usuario_id"] == 1 and fila["ip"] == "testclient" and fila["en"].endswith("Z")
+def test_login_correcto_devuelve_los_tokens_de_directus_y_reenvia_la_ip(client, directus):
+    t = entrar(client, ADMIN, CLAVE_ADMIN)
+    assert t["token_type"] == "bearer" and t["expires_in"] == 600 and t["access_token"] and t["refresh_token"]
+    envio = next(l for l in directus.llamadas if l[1] == "/auth/login")
+    assert envio[4] == "testclient"                        # Directus registra la IP real, no la de la API
+    assert eventos(directus, "login")[0]["resultado"] == "ok"
 
 
-def test_la_clave_se_guarda_con_argon2id_y_no_en_claro(db):
-    h = db.execute("SELECT hash_clave FROM identidad_usuario WHERE email = ?", (ADMIN_EMAIL,)).fetchone()[0]
-    assert h.startswith("$argon2id$") and CLAVE_ADMIN not in h
-
-
-def test_login_fallido_audita_sin_guardar_la_clave(client, db):
-    r = client.post("/auth/login", json={"email": ADMIN_EMAIL, "clave": "zzClaveMalaUnica"})
+def test_login_fallido_audita_sin_guardar_la_clave(client, directus):
+    r = client.post("/auth/login", json={"email": ADMIN, "clave": "zzClaveMalaUnica"})
     assert r.status_code == 401
-    fila = auditoria(db, "login", "denegado")[0]
-    assert fila["usuario_id"] == 1 and "clave_incorrecta" in fila["despues"] and "zzClaveMalaUnica" not in str(fila)
+    e = eventos(directus, "login")[0]
+    assert e["resultado"] == "denegado" and "clave_incorrecta" in e["despues"] and "zzClaveMalaUnica" not in str(directus.items)
 
 
-def test_usuario_desconocido_responde_igual_y_se_audita(client, db):
-    a = client.post("/auth/login", json={"email": "nadie@ejemplo.invalid", "clave": "x" * 14})
-    b = client.post("/auth/login", json={"email": ADMIN_EMAIL, "clave": "x" * 14})
+def test_usuario_desconocido_responde_igual_y_se_audita(client, directus):
+    a = client.post("/auth/login", json={"email": "nadie@example.com", "clave": "x" * 14})
+    b = client.post("/auth/login", json={"email": ADMIN, "clave": "x" * 14})
     assert a.status_code == b.status_code == 401 and a.json() == b.json()
-    assert any("usuario_desconocido" in f["despues"] for f in auditoria(db, "login", "denegado"))
+    assert any("usuario_desconocido" in e["despues"] for e in eventos(directus, "login"))
 
 
-def test_bloqueo_tras_intentos_fallidos_incluso_con_la_clave_correcta(client, db):
+def test_bloqueo_tras_intentos_fallidos_incluso_con_la_clave_correcta(client, directus):
     for _ in range(3):
-        assert client.post("/auth/login", json={"email": PRUEBA_EMAIL, "clave": "mala-mala-mala"}).status_code == 401
-    r = client.post("/auth/login", json={"email": PRUEBA_EMAIL, "clave": "Clave-Prueba-de-prueba-2"})
-    assert r.status_code == 423
-    motivos = [f["despues"] for f in auditoria(db, "login", "denegado")]
-    assert any("bloqueo_por_intentos" in m for m in motivos) and any("cuenta_bloqueada" in m for m in motivos)
+        assert client.post("/auth/login", json={"email": PRUEBA, "clave": "mala-mala-mala"}).status_code == 401
+    assert client.post("/auth/login", json={"email": PRUEBA, "clave": CLAVE_PRUEBA}).status_code == 423
+    motivos = " ".join(e["despues"] for e in eventos(directus, "login"))
+    assert "bloqueo_por_intentos" in motivos and "cuenta_bloqueada" in motivos
+    assert directus.usuarios[PRUEBA]["bloqueado_hasta"]
 
 
-def test_un_acierto_reinicia_el_contador(client, db):
+def test_un_acierto_reinicia_el_contador(client, directus):
     for _ in range(2):
-        client.post("/auth/login", json={"email": PRUEBA_EMAIL, "clave": "mala-mala-mala"})
-    entrar(client, PRUEBA_EMAIL, "Clave-Prueba-de-prueba-2")
-    assert db.execute("SELECT intentos_fallidos FROM identidad_usuario WHERE email = ?", (PRUEBA_EMAIL,)).fetchone()[0] == 0
+        client.post("/auth/login", json={"email": PRUEBA, "clave": "mala-mala-mala"})
+    assert directus.usuarios[PRUEBA]["intentos_fallidos"] == 2
+    entrar(client, PRUEBA, CLAVE_PRUEBA)
+    assert directus.usuarios[PRUEBA]["intentos_fallidos"] == 0
 
 
-def test_limite_de_peticiones_por_ip(tmp_path):
-    from fastapi.testclient import TestClient
-    from app.main import create_app
-    app = create_app(hacer_settings(tmp_path, login_por_minuto_ip=3))
+def test_el_bloqueo_vence(client, directus):
+    for _ in range(3):
+        client.post("/auth/login", json={"email": PRUEBA, "clave": "mala-mala-mala"})
+    directus.usuarios[PRUEBA]["bloqueado_hasta"] = "2000-01-01T00:00:00Z"
+    entrar(client, PRUEBA, CLAVE_PRUEBA)
+
+
+def test_limite_de_peticiones_por_ip(directus):
+    app = create_app(hacer_settings(login_por_minuto_ip=3), transport=httpx.MockTransport(directus))
     c = TestClient(app)
-    codigos = [c.post("/auth/login", json={"email": "a@ejemplo.invalid", "clave": "x" * 14}).status_code for _ in range(5)]
+    codigos = [c.post("/auth/login", json={"email": "a@example.com", "clave": "x" * 14}).status_code for _ in range(5)]
     assert codigos[:3] == [401, 401, 401] and codigos[3:] == [429, 429]
 
 
-def test_acceso_sin_token_o_con_token_manipulado(client, settings):
+def test_una_cuenta_sin_rol_de_plataforma_no_entra(client, directus):
+    directus.agregar_usuario("sinrol@example.com", "Clave-Larga-Sinrol-1x", "cccccccc-cccc-cccc-cccc-cccccccccccc", None, None)
+    r = client.post("/auth/login", json={"email": "sinrol@example.com", "clave": "Clave-Larga-Sinrol-1x"})
+    assert r.status_code == 403 and "rol de la plataforma" in r.json()["detail"]
+    assert not directus.refresh                              # la sesión que abrió la comprobación se cerró
+
+
+def test_acceso_sin_token_con_token_falso_o_de_otro_origen(client):
     assert client.get("/auth/yo").status_code == 401
     assert client.get("/auth/yo", headers={"Authorization": "Bearer abc.def.ghi"}).status_code == 401
-    sin_firma = jwt.encode({"sub": "1", "fam": "x", "iss": "disc-scheduling", "iat": 1, "exp": int(time.time()) + 99},
-                           key="", algorithm="none")
-    assert client.get("/auth/yo", headers={"Authorization": f"Bearer {sin_firma}"}).status_code == 401
-    otra_firma = jwt.encode({"sub": "1", "fam": "x", "iss": "disc-scheduling", "iat": 1, "exp": int(time.time()) + 99, "typ": "access"},
-                            key="otro-secreto-de-48-caracteres-xxxxxxxxxxxxxxxxx", algorithm="HS256")
-    assert client.get("/auth/yo", headers={"Authorization": f"Bearer {otra_firma}"}).status_code == 401
 
 
-def test_token_de_acceso_vencido(client, settings):
-    pasado = int(time.time()) - 5
-    t = jwt.encode({"sub": "1", "fam": "x", "iss": "disc-scheduling", "iat": pasado - 60, "exp": pasado, "typ": "access"},
-                   settings.jwt_secret, algorithm="HS256")
-    assert client.get("/auth/yo", headers={"Authorization": f"Bearer {t}"}).status_code == 401
+def test_perfil_con_permisos_por_departamento(client, admin, consulta):
+    p = client.get("/auth/yo", headers=consulta).json()
+    assert p["rol"] == "consulta" and p["permisos"] == {"catalogo.ver": [1], "horarios.ver": [1]}
+    todo = client.get("/auth/yo", headers=admin).json()
+    assert todo["permisos"]["catalogo.editar"] == [None] and todo["id"] == 1        # [null] = todos los departamentos
 
 
-def test_refresh_rota_y_la_reutilizacion_cierra_la_familia(client, db):
-    t1 = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
+def test_refresh_rota_y_el_viejo_se_rechaza(client):
+    t1 = entrar(client, ADMIN, CLAVE_ADMIN)
     r = client.post("/auth/refresh", json={"refresh_token": t1["refresh_token"]})
-    assert r.status_code == 200
-    t2 = r.json()
-    assert t2["refresh_token"] != t1["refresh_token"]
-    assert client.get("/auth/yo", headers=cabecera(t2)).status_code == 200
-    # reutilizar el primero (ya usado) es señal de robo: se revoca todo
+    assert r.status_code == 200 and r.json()["refresh_token"] != t1["refresh_token"]
+    assert client.get("/auth/yo", headers=cabecera(r.json())).status_code == 200
     assert client.post("/auth/refresh", json={"refresh_token": t1["refresh_token"]}).status_code == 401
-    assert client.get("/auth/yo", headers=cabecera(t2)).status_code == 401
-    assert client.post("/auth/refresh", json={"refresh_token": t2["refresh_token"]}).status_code == 401
-    assert auditoria(db, "refresh_reutilizado", "denegado")
 
 
-def test_el_refresh_solo_se_guarda_con_hash(client, db):
-    t = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
-    assert db.execute("SELECT count(*) FROM identidad_sesion WHERE token_hash = ?", (t["refresh_token"],)).fetchone()[0] == 0
-    assert db.execute("SELECT count(*) FROM identidad_sesion WHERE token_hash = ?",
-                      (security.hash_refresh(t["refresh_token"]),)).fetchone()[0] == 1
-
-
-def test_refresh_vencido(client, db):
-    t = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
-    db.execute("UPDATE identidad_sesion SET expira_en = '2000-01-01T00:00:00Z'")
-    assert client.post("/auth/refresh", json={"refresh_token": t["refresh_token"]}).status_code == 401
-
-
-def test_logout_invalida_el_token_de_inmediato_y_se_audita(client, db):
-    t = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
+def test_logout_el_acceso_deja_de_valer_de_inmediato_aunque_directus_lo_aceptaria(client, directus):
+    t = entrar(client, ADMIN, CLAVE_ADMIN)
     h = cabecera(t)
-    assert client.post("/auth/logout", headers=h).status_code == 204
-    assert client.get("/auth/yo", headers=h).status_code == 401
+    assert client.get("/auth/yo", headers=h).status_code == 200
+    assert client.post("/auth/logout", headers=h, json={"refresh_token": t["refresh_token"]}).status_code == 204
+    assert t["access_token"] in directus.sesiones                      # Directus todavía lo daría por bueno
+    assert client.get("/auth/yo", headers=h).status_code == 401        # pero esta API ya no
     assert client.post("/auth/refresh", json={"refresh_token": t["refresh_token"]}).status_code == 401
-    fila = auditoria(db, "logout")[0]
-    assert fila["usuario_id"] == 1 and fila["ip"] == "testclient"
+    assert eventos(directus, "logout")
 
 
-def test_cambio_de_clave_exige_la_actual_valida_la_politica_y_cierra_sesiones(client, db):
-    t = entrar(client, ADMIN_EMAIL, CLAVE_ADMIN)
+def test_cambio_de_clave_exige_la_actual_valida_la_politica_y_cierra_el_acceso(client, directus):
+    t = entrar(client, ADMIN, CLAVE_ADMIN)
     h = cabecera(t)
     assert client.post("/auth/cambiar-clave", headers=h, json={"actual": "mal", "nueva": "Otra-clave-larga-77"}).status_code == 403
     assert client.post("/auth/cambiar-clave", headers=h, json={"actual": CLAVE_ADMIN, "nueva": "corta1"}).status_code == 422
+    assert directus.usuarios[ADMIN]["password"] == CLAVE_ADMIN
     assert client.post("/auth/cambiar-clave", headers=h, json={"actual": CLAVE_ADMIN, "nueva": "Otra-clave-larga-77"}).status_code == 204
+    assert directus.usuarios[ADMIN]["password"] == "Otra-clave-larga-77"
     assert client.get("/auth/yo", headers=h).status_code == 401
-    entrar(client, ADMIN_EMAIL, "Otra-clave-larga-77")
-    assert auditoria(db, "cambio_clave", "ok") and auditoria(db, "cambio_clave", "denegado")
+    entrar(client, ADMIN, "Otra-clave-larga-77")
+    assert eventos(directus, "cambio_clave")
 
 
-def test_usuario_eliminado_o_inactivo_no_entra(client, db):
-    db.execute("UPDATE identidad_usuario SET activo = 0 WHERE email = ?", (PRUEBA_EMAIL,))
-    assert client.post("/auth/login", json={"email": PRUEBA_EMAIL, "clave": "Clave-Prueba-de-prueba-2"}).status_code == 401
+def test_la_clave_nueva_no_puede_contener_el_correo(client):
+    h = cabecera(entrar(client, ADMIN, CLAVE_ADMIN))
+    r = client.post("/auth/cambiar-clave", headers=h, json={"actual": CLAVE_ADMIN, "nueva": "encargado.docente-2026"})
+    assert r.status_code == 422 and "correo" in r.json()["detail"]
 
 
-def test_sin_secreto_jwt_la_app_no_arranca(tmp_path):
+def test_si_directus_cae_la_api_responde_503_y_no_se_cuelga(directus):
+    def caido(req):
+        raise httpx.ConnectError("sin red")
+    c = TestClient(create_app(hacer_settings(), transport=httpx.MockTransport(caido)))
+    assert c.post("/auth/login", json={"email": ADMIN, "clave": CLAVE_ADMIN}).status_code == 503
+    assert c.get("/auth/yo", headers={"Authorization": "Bearer x"}).status_code == 503
+    assert c.get("/health").json()["status"] == "degraded"
+
+
+def test_sin_token_de_servicio_o_con_claves_malas_la_app_no_arranca():
     import pytest
-    from app.main import create_app
+    from app.core.pii import ClaveFaltante
     with pytest.raises(RuntimeError):
-        create_app(hacer_settings(tmp_path, jwt_secret="corto"))
+        create_app(hacer_settings(servicio_token="corto"))
+    with pytest.raises(ClaveFaltante):
+        create_app(hacer_settings(data_keys="", index_key=""))
