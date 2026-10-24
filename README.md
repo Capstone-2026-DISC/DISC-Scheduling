@@ -7,6 +7,8 @@
 Plataforma web de apoyo a la programación académica del Departamento de Ingeniería de Sistemas y Computación de la Universidad Católica del Norte
 
 [![CI](https://github.com/Capstone-2026-DISC/DISC-Scheduling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Capstone-2026-DISC/DISC-Scheduling/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Capstone-2026-DISC/DISC-Scheduling?label=release)](https://github.com/Capstone-2026-DISC/DISC-Scheduling/releases/latest)
+[![Wiki](https://img.shields.io/badge/wiki-documentaci%C3%B3n-2f6feb)](https://github.com/Capstone-2026-DISC/DISC-Scheduling/wiki)
 
 </div>
 
