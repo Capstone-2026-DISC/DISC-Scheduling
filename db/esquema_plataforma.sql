@@ -759,6 +759,52 @@ CREATE TABLE proyeccion_estimacion (
 ) STRICT;
 CREATE INDEX estimacion_periodo_ix ON proyeccion_estimacion (periodo_id, asignatura_id);
 
+
+-- ---------------------------------------------------------------------
+-- 6b. Publicación para los módulos de Proyecto Integrador
+-- ---------------------------------------------------------------------
+-- Viven en el mismo archivo y el mismo Directus que el núcleo, pero separadas por permisos: cada grupo (g1 a g4) tiene un
+-- rol y un token que solo leen pub_* y solo escriben en su propia sat_<grupo>_registro. pub_* es una copia derivada que
+-- regenera la API (python -m app.publicacion): sin personas, docentes, nombramientos, finanzas ni auditoría.
+CREATE TABLE pub_periodo (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, estado TEXT NOT NULL) STRICT;
+CREATE TABLE pub_programa (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, tipo TEXT) STRICT;
+CREATE TABLE pub_asignatura (id INTEGER PRIMARY KEY, codigo TEXT, nombre TEXT NOT NULL, area TEXT,
+                             requiere_laboratorio INTEGER NOT NULL) STRICT;
+CREATE TABLE pub_sala (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, capacidad INTEGER,
+                       es_laboratorio INTEGER NOT NULL) STRICT;
+CREATE TABLE pub_paralelo (id INTEGER PRIMARY KEY, periodo_id INTEGER NOT NULL, asignatura_id INTEGER NOT NULL,
+                           codigo TEXT NOT NULL, nrc INTEGER, componente TEXT, cupo_estimado INTEGER) STRICT;
+CREATE TABLE pub_horario (id INTEGER PRIMARY KEY, paralelo_id INTEGER NOT NULL, sesion INTEGER NOT NULL,
+                          dia TEXT NOT NULL, bloque TEXT NOT NULL, sala_codigo TEXT) STRICT;
+CREATE TABLE pub_estado (id INTEGER PRIMARY KEY CHECK (id = 1), publicado_en TEXT NOT NULL) STRICT;
+CREATE TABLE sat_g1_registro (
+  id          INTEGER PRIMARY KEY,
+  clave       TEXT NOT NULL,
+  valor       TEXT CHECK (valor IS NULL OR json_valid(valor)),
+  creado_en   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  eliminado_en TEXT
+) STRICT;
+CREATE TABLE sat_g2_registro (
+  id          INTEGER PRIMARY KEY,
+  clave       TEXT NOT NULL,
+  valor       TEXT CHECK (valor IS NULL OR json_valid(valor)),
+  creado_en   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  eliminado_en TEXT
+) STRICT;
+CREATE TABLE sat_g3_registro (
+  id          INTEGER PRIMARY KEY,
+  clave       TEXT NOT NULL,
+  valor       TEXT CHECK (valor IS NULL OR json_valid(valor)),
+  creado_en   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  eliminado_en TEXT
+) STRICT;
+CREATE TABLE sat_g4_registro (
+  id          INTEGER PRIMARY KEY,
+  clave       TEXT NOT NULL,
+  valor       TEXT CHECK (valor IS NULL OR json_valid(valor)),
+  creado_en   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  eliminado_en TEXT
+) STRICT;
 -- ---------------------------------------------------------------------
 -- 7. Datos base
 -- ---------------------------------------------------------------------
@@ -938,5 +984,13 @@ CREATE TRIGGER sin_borrado_proyeccion_estimacion_externa BEFORE DELETE ON proyec
 BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en proyeccion_estimacion_externa'); END;
 CREATE TRIGGER sin_borrado_proyeccion_estimacion BEFORE DELETE ON proyeccion_estimacion
 BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en proyeccion_estimacion'); END;
+CREATE TRIGGER sin_borrado_sat_g1_registro BEFORE DELETE ON sat_g1_registro
+BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en sat_g1_registro'); END;
+CREATE TRIGGER sin_borrado_sat_g2_registro BEFORE DELETE ON sat_g2_registro
+BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en sat_g2_registro'); END;
+CREATE TRIGGER sin_borrado_sat_g3_registro BEFORE DELETE ON sat_g3_registro
+BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en sat_g3_registro'); END;
+CREATE TRIGGER sin_borrado_sat_g4_registro BEFORE DELETE ON sat_g4_registro
+BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en sat_g4_registro'); END;
 
 COMMIT;

@@ -860,6 +860,35 @@ INSERT INTO plataforma_modulo (codigo, nombre) VALUES
 
 """
 
+PUBLICACION = """
+-- ---------------------------------------------------------------------
+-- 6b. Publicación para los módulos de Proyecto Integrador
+-- ---------------------------------------------------------------------
+-- Viven en el mismo archivo y el mismo Directus que el núcleo, pero separadas por permisos: cada grupo (g1 a g4) tiene un
+-- rol y un token que solo leen pub_* y solo escriben en su propia sat_<grupo>_registro. pub_* es una copia derivada que
+-- regenera la API (python -m app.publicacion): sin personas, docentes, nombramientos, finanzas ni auditoría.
+CREATE TABLE pub_periodo (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, estado TEXT NOT NULL) STRICT;
+CREATE TABLE pub_programa (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, tipo TEXT) STRICT;
+CREATE TABLE pub_asignatura (id INTEGER PRIMARY KEY, codigo TEXT, nombre TEXT NOT NULL, area TEXT,
+                             requiere_laboratorio INTEGER NOT NULL) STRICT;
+CREATE TABLE pub_sala (id INTEGER PRIMARY KEY, codigo TEXT NOT NULL, nombre TEXT, capacidad INTEGER,
+                       es_laboratorio INTEGER NOT NULL) STRICT;
+CREATE TABLE pub_paralelo (id INTEGER PRIMARY KEY, periodo_id INTEGER NOT NULL, asignatura_id INTEGER NOT NULL,
+                           codigo TEXT NOT NULL, nrc INTEGER, componente TEXT, cupo_estimado INTEGER) STRICT;
+CREATE TABLE pub_horario (id INTEGER PRIMARY KEY, paralelo_id INTEGER NOT NULL, sesion INTEGER NOT NULL,
+                          dia TEXT NOT NULL, bloque TEXT NOT NULL, sala_codigo TEXT) STRICT;
+CREATE TABLE pub_estado (id INTEGER PRIMARY KEY CHECK (id = 1), publicado_en TEXT NOT NULL) STRICT;
+"""
+SATELITES = ("g1", "g2", "g3", "g4")
+REGISTRO_SATELITE = """CREATE TABLE sat_{g}_registro (
+  id          INTEGER PRIMARY KEY,
+  clave       TEXT NOT NULL,
+  valor       TEXT CHECK (valor IS NULL OR json_valid(valor)),
+  creado_en   @TS@,
+  eliminado_en TEXT
+) STRICT;"""
+PUBLICACION += "\n".join(REGISTRO_SATELITE.format(g=g) for g in SATELITES) + "\n"
+
 # Tablas con DELETE permitido (datos derivados de un borrador) y tablas con borrado lógico
 BORRABLES = {"horarios_asignacion", "horarios_hallazgo", "horarios_corrida_actividad"}
 SIN_BORRADO = [  # todas las tablas de negocio menos las borrables y la auditoría (que tiene su propio trigger)
@@ -873,7 +902,7 @@ SIN_BORRADO = [  # todas las tablas de negocio menos las borrables y la auditor�
     "horarios_envio_horario", "finanzas_categoria", "finanzas_escenario", "finanzas_tarifa", "finanzas_presupuesto",
     "finanzas_categoria_persona", "finanzas_nombramiento", "finanzas_calculo", "finanzas_calculo_detalle",
     "proyeccion_inscripcion_historica", "proyeccion_estimacion_externa", "proyeccion_estimacion",
-]
+] + [f"sat_{g}_registro" for g in ("g1", "g2", "g3", "g4")]
 
 
 def triggers_borrado():
@@ -889,7 +918,7 @@ def triggers_borrado():
 
 
 def main():
-    ddl = IDENTIDAD + PLATAFORMA + CATALOGO + HORARIOS + FINANZAS + PROYECCION
+    ddl = IDENTIDAD + PLATAFORMA + CATALOGO + HORARIOS + FINANZAS + PROYECCION + PUBLICACION
     cuerpo = ddl.replace("@TS@", TS).replace("@SD@,", SD + ",").replace("@SD@", SD)
     sys.stdout.write(CABECERA + cuerpo + DATOS + triggers_borrado() + "\nCOMMIT;\n")
 
