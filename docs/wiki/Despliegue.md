@@ -15,7 +15,7 @@ docker compose logs configurar          # roles, permisos y verificaciones de Di
 | `directus` | 8055 | Directus sobre `plataforma.db`. Es lo único que abre ese archivo en funcionamiento normal, para las personas y para los grupos de Proyecto Integrador |
 | `configurar` | | Una sola vez: carga roles y permisos, crea usuarios y un rol con token por grupo, publica la copia `pub_*` y falla si alguna verificación no se cumple |
 | `api` | 8000 | FastAPI. Arranca cuando `configurar` terminó bien |
-| `frontend` | 3000 | Interfaz web (Next.js). Hoy trae la pantalla de inicio de sesión |
+| `frontend` | 3000 | Interfaz web (Next.js) |
 
 El orden es `migrar`, `directus`, `configurar`, `api`, `frontend`. Las claves de los usuarios iniciales salen de `SEED_ADMIN_PASSWORD` y `SEED_TEST_PASSWORD` del `.env`: `encargado.docente@example.com` (rol Administrador, todos los permisos) y `usuario.prueba@example.com` (consulta, solo lectura en el DISC). El departamento DISC es el id 1 y existe siempre. Todos los puertos escuchan solo en `127.0.0.1`.
 

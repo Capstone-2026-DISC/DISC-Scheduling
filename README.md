@@ -127,7 +127,7 @@ Para otro grupo se cambian `GRUPO`, `DIRECTUS_TOKEN` y `DIRECTUS_URL`. Detalles 
 | API de catálogo, horarios, finanzas y usuarios, documentada en `/docs` | Disponible |
 | Importación de CSV con plantillas y errores explicados por fila | Disponible |
 | Directus como capa de acceso a los datos, y réplica para los módulos de los grupos | Disponible |
-| Frontend | Solo la pantalla de inicio de sesión, aún sin conectar a la API |
+| Interfaz web | En desarrollo |
 | Generación de horarios con el motor de optimización | Pendiente de integrar |
 | Cálculo del costo docente contra el presupuesto | Pendiente |
 | Componente predictivo | Esqueleto |
