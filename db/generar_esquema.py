@@ -2,29 +2,14 @@
 """Genera esquema_plataforma.sql (SQLite 3.44 o superior).
 
 Las tablas y los datos base están escritos a mano aquí; los triggers repetitivos
-(borrado lógico y auditoría de cambios) se generan por tabla para que no se desvíen.
+(borrado lógico) se generan por tabla para que no se desvíen.
 Uso: python3 generar_esquema.py > esquema_plataforma.sql
 """
 import sys
 
 TS = "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 SD = "eliminado_en TEXT,\n  eliminado_por INTEGER REFERENCES identidad_usuario"
-CTX = "(SELECT usuario_id FROM plataforma_contexto)"
-IPX = "(SELECT ip FROM plataforma_contexto)"
-OCULTAS = {"hash_clave", "intentos_fallidos", "bloqueado_hasta", "ultimo_acceso_en"}   # secretos y contadores: no se auditan
-JSON_COLS = {"alcance", "parametros", "metricas", "detalle", "datos", "errores", "pesos", "pesos_usados",
-             "restricciones_usadas", "semilla", "reglas"}
 
-
-def sin_permiso(permiso, dep):
-    """Condición SQL: hay usuario en el contexto y no tiene el permiso en el departamento (nulo = global)."""
-    return (f"{CTX} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM identidad_permiso_efectivo pe "
-            f"WHERE pe.usuario_id = {CTX} AND pe.permiso = '{permiso}' "
-            f"AND (pe.departamento_id IS NULL OR pe.departamento_id = {dep}))")
-
-
-DEP_PERIODO = "(SELECT departamento_id FROM catalogo_periodo WHERE id = {})"
-DEP_PROPUESTA = "(SELECT pe.departamento_id FROM horarios_propuesta p JOIN catalogo_periodo pe ON pe.id = p.periodo_id WHERE p.id = {})"
 
 CABECERA = """-- =====================================================================
 -- Plataforma DISC · estructura de la base de datos (SQLite 3.44 o superior)
@@ -36,20 +21,16 @@ CABECERA = """-- ===============================================================
 --   horarios_     oferta del periodo (paralelos), reglas, corridas de FET y propuestas
 --   finanzas_     categorías, valor hora, presupuestos y nombramientos
 --   proyeccion_   inscritos históricos y estimaciones
---   plataforma_   importaciones, módulos habilitados, contexto de sesión y auditoría
+--   plataforma_   importaciones, módulos habilitados y auditoría de los eventos de la aplicación
 -- Módulos de los grupos (g1 a g4): cada uno tiene su propio archivo SQLite (g1.db ...);
 -- el módulo base no los adjunta ni hay FK entre ellos: se hablan por la interfaz de integración.
 --
--- Cómo se conecta la aplicación (una vez por conexión):
---   PRAGMA foreign_keys = ON;   PRAGMA journal_mode = WAL;   PRAGMA busy_timeout = 5000;
--- Cómo escribe (SQLite admite un solo escritor, así que el contexto es seguro):
---   BEGIN IMMEDIATE;
---   UPDATE plataforma_contexto SET usuario_id = <id de la persona usuaria>;
---   ... cambios ...
---   UPDATE plataforma_contexto SET usuario_id = NULL;
---   COMMIT;
--- Con usuario_id fijado, los triggers comprueban permisos y la auditoría registra quién.
--- Sin usuario (migraciones, worker de corridas) no se comprueba permiso.
+-- Quién abre este archivo: solo Directus (PRAGMA foreign_keys = ON, journal_mode = WAL y busy_timeout = 5000).
+-- La API de la plataforma le habla a Directus con la sesión de cada persona. Directus aplica los permisos por rol y
+-- departamento (las políticas se generan desde identidad_rol_permiso) y deja el registro de quién cambió qué, con IP y
+-- fecha, en directus_activity y directus_revisions. Las migraciones y el generador de datos de prueba son las únicas
+-- excepciones. Los triggers de este archivo no dependen de quién escribe: guardan la integridad (borrado lógico,
+-- aprobación de horarios, restricciones usadas) sea cual sea el camino de acceso.
 --
 -- Convenciones:
 --   * nombres en español, snake_case y tablas en singular
@@ -63,13 +44,15 @@ CABECERA = """-- ===============================================================
 --   * terminología del ERS: paralelo (antes sección); NRC es el código de Banner
 --   * departamentos: el DISC es el id 1 y existe siempre. Los datos maestros, restricciones,
 --     períodos y presupuestos llevan departamento_id; lo demás lo hereda por el período.
---     La vista identidad_permiso_efectivo dice qué permiso tiene cada usuario y dónde
---     (departamento_id nulo = todos). Un departamento no edita los horarios de otro.
+--     Cada usuario de Directus tiene su departamento (campo departamento_id, nulo = todos) y las políticas de
+--     Directus filtran por él: un departamento no edita los horarios de otro.
 --   * borrado lógico: nada se elimina de forma efectiva. Las tablas mantenidas por
 --     usuarios tienen eliminado_en/eliminado_por y un trigger impide el DELETE
 --     (salvo datos derivados de un borrador: asignaciones, hallazgos y actividades de FET).
---   * auditoría: plataforma_auditoria registra quién, cuándo, qué elemento y qué cambió
---     (solo los campos que cambiaron). Es de solo inserción y se conserva 5 años;
+--   * auditoría: los cambios de datos y los inicios de sesión los registra Directus (directus_activity y
+--     directus_revisions, protegidas contra modificación y borrado por triggers que crea el configurador).
+--     plataforma_auditoria guarda los eventos que Directus no ve: intentos de acceso fallidos, accesos denegados,
+--     lectura de datos personales, publicaciones e importaciones. Es de solo inserción y se conserva 5 años;
 --     pasado ese plazo se purga con:
 --       DELETE FROM plataforma_auditoria WHERE en < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 years');
 --   * acceso de los satélites: lectura mediante Directus (opción A) sobre este mismo archivo;
@@ -101,16 +84,14 @@ CREATE TABLE identidad_departamento (
 ) STRICT;
 CREATE UNIQUE INDEX departamento_predeterminado_uk ON identidad_departamento (predeterminado) WHERE predeterminado = 1;
 
--- Personas y credenciales de módulos satélite: tipo 'modulo' (email técnico, p. ej. g2@modulos.local).
+-- Espejo de los usuarios de Directus, que es quien guarda las credenciales y la sesión. Existe para que las demás tablas
+-- (eliminado_por, creada_por, aprobada_por...) sigan apuntando a un id entero. Lo mantiene la API.
 CREATE TABLE identidad_usuario (
   id            INTEGER PRIMARY KEY,
+  directus_id   TEXT NOT NULL UNIQUE CHECK (length(directus_id) = 36),   -- id (UUID) del usuario en Directus
   email         TEXT NOT NULL UNIQUE CHECK (email = lower(email)),
   nombre        TEXT NOT NULL,
   tipo          TEXT NOT NULL DEFAULT 'persona' CHECK (tipo IN ('persona', 'modulo')),
-  hash_clave    TEXT,                                -- argon2id; nulo si entra con el inicio de sesión institucional
-  intentos_fallidos  INTEGER NOT NULL DEFAULT 0 CHECK (intentos_fallidos >= 0),   -- consecutivos; vuelve a 0 al entrar
-  bloqueado_hasta    TEXT,                             -- bloqueo temporal por intentos fallidos
-  ultimo_acceso_en   TEXT,
   activo        INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
   creado_en     @TS@,
   @SD@
@@ -140,45 +121,6 @@ CREATE TABLE identidad_rol_permiso (
   UNIQUE (rol, permiso)
 ) STRICT;
 
--- Un rol se asigna dentro de un departamento. departamento_id nulo = todos los departamentos.
-CREATE TABLE identidad_usuario_rol (
-  id               INTEGER PRIMARY KEY,
-  usuario_id       INTEGER NOT NULL REFERENCES identidad_usuario,
-  rol              TEXT NOT NULL REFERENCES identidad_rol,
-  departamento_id  INTEGER REFERENCES identidad_departamento,
-  asignado_por     INTEGER REFERENCES identidad_usuario,
-  asignado_en      @TS@,
-  revocado_en      TEXT
-) STRICT;
-CREATE UNIQUE INDEX usuario_rol_vigente_uk
-  ON identidad_usuario_rol (usuario_id, rol, COALESCE(departamento_id, 0))
-  WHERE revocado_en IS NULL;
-
--- Sesiones de la API: solo se guarda el hash del refresh token (rotativo). 'familia' agrupa los tokens
--- encadenados de un mismo inicio de sesión; reutilizar uno ya usado revoca toda la familia.
-CREATE TABLE identidad_sesion (
-  id           INTEGER PRIMARY KEY,
-  usuario_id   INTEGER NOT NULL REFERENCES identidad_usuario,
-  familia      TEXT NOT NULL,
-  token_hash   TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
-  creada_en    @TS@,
-  expira_en    TEXT NOT NULL,
-  usado_en     TEXT,
-  revocada_en  TEXT,
-  ip           TEXT
-) STRICT;
-CREATE INDEX sesion_usuario_ix ON identidad_sesion (usuario_id, revocada_en);
-CREATE INDEX sesion_familia_ix ON identidad_sesion (familia);
-
--- Qué puede hacer cada usuario y dónde. departamento_id nulo = en todos los departamentos.
-CREATE VIEW identidad_permiso_efectivo AS
-SELECT ur.usuario_id, ur.departamento_id, rp.permiso
-FROM identidad_usuario_rol ur
-JOIN identidad_usuario u      ON u.id = ur.usuario_id AND u.activo = 1 AND u.eliminado_en IS NULL
-JOIN identidad_rol r          ON r.codigo = ur.rol AND r.activo = 1 AND r.eliminado_en IS NULL
-JOIN identidad_rol_permiso rp ON rp.rol = r.codigo AND rp.revocado_en IS NULL
-WHERE ur.revocado_en IS NULL;
-
 CREATE TRIGGER departamento_protegido BEFORE UPDATE ON identidad_departamento
 WHEN OLD.predeterminado = 1 AND (NEW.predeterminado = 0 OR NEW.activo = 0 OR NEW.eliminado_en IS NOT NULL)
 BEGIN SELECT RAISE(ABORT, 'El departamento predeterminado no se puede desactivar ni eliminar'); END;
@@ -187,33 +129,11 @@ CREATE TRIGGER rol_protegido BEFORE UPDATE ON identidad_rol
 WHEN OLD.es_sistema = 1 AND (NEW.es_sistema = 0 OR NEW.activo = 0 OR NEW.eliminado_en IS NOT NULL)
 BEGIN SELECT RAISE(ABORT, 'El rol de sistema no se desactiva ni se elimina'); END;
 
--- Nadie modifica sus propios roles; gestionar los de otros exige usuarios.gestionar en ese departamento.
-CREATE TRIGGER usuario_rol_propio_i BEFORE INSERT ON identidad_usuario_rol
-WHEN @CTX@ IS NOT NULL AND NEW.usuario_id = @CTX@
-BEGIN SELECT RAISE(ABORT, 'Nadie puede modificar sus propios roles'); END;
-CREATE TRIGGER usuario_rol_propio_u BEFORE UPDATE ON identidad_usuario_rol
-WHEN @CTX@ IS NOT NULL AND NEW.usuario_id = @CTX@
-BEGIN SELECT RAISE(ABORT, 'Nadie puede modificar sus propios roles'); END;
-CREATE TRIGGER usuario_rol_permiso_i BEFORE INSERT ON identidad_usuario_rol
-WHEN @SIN_USUARIOS@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para gestionar usuarios en ese departamento'); END;
-CREATE TRIGGER usuario_rol_permiso_u BEFORE UPDATE ON identidad_usuario_rol
-WHEN @SIN_USUARIOS@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para gestionar usuarios en ese departamento'); END;
-
 """
 
 PLATAFORMA = """-- ---------------------------------------------------------------------
--- 2. plataforma (importaciones, módulos, contexto y auditoría)
+-- 2. plataforma (importaciones, módulos y auditoría de eventos)
 -- ---------------------------------------------------------------------
--- Una fila: la persona que escribe en esta transacción (ver la cabecera).
-CREATE TABLE plataforma_contexto (
-  id          INTEGER PRIMARY KEY CHECK (id = 1),
-  usuario_id  INTEGER REFERENCES identidad_usuario,
-  ip          TEXT                                -- origen de la petición; lo fija la aplicación junto al usuario
-) STRICT;
-INSERT INTO plataforma_contexto (id, usuario_id, ip) VALUES (1, NULL, NULL);
-
 CREATE TABLE plataforma_importacion (
   id                  INTEGER PRIMARY KEY,
   departamento_id     INTEGER NOT NULL DEFAULT 1 REFERENCES identidad_departamento,
@@ -251,15 +171,15 @@ CREATE TABLE plataforma_modulo (
   version     TEXT                                -- la que fija platform.lock
 ) STRICT;
 
--- Auditoría: solo inserción, 5 años. Cada fila dice quién, cuándo, sobre qué elemento y qué cambió
--- (antes y después de los campos que cambiaron). Los triggers 'auditar_*' están al final del archivo.
+-- Auditoría de eventos de la aplicación: solo inserción, 5 años. Cada fila dice quién, cuándo, desde qué IP y sobre qué
+-- elemento. Los cambios de datos no pasan por aquí: los registra Directus en directus_activity y directus_revisions.
 CREATE TABLE plataforma_auditoria (
   id               INTEGER PRIMARY KEY,
   en               @TS@,
   usuario_id       INTEGER REFERENCES identidad_usuario,
   departamento_id  INTEGER REFERENCES identidad_departamento,
   ip               TEXT,                          -- dirección de origen de la petición
-  accion           TEXT NOT NULL,                 -- insert, update, delete o una acción de negocio: acceso_denegado, ...
+  accion           TEXT NOT NULL,                 -- login, acceso_denegado, lectura_datos_personales, importacion, publicacion_satelites...
   resultado        TEXT NOT NULL DEFAULT 'ok' CHECK (resultado IN ('ok', 'denegado', 'error')),
   entidad          TEXT NOT NULL,
   entidad_id       TEXT,
@@ -269,12 +189,6 @@ CREATE TABLE plataforma_auditoria (
 CREATE INDEX auditoria_entidad_ix ON plataforma_auditoria (entidad, entidad_id);
 CREATE INDEX auditoria_usuario_ix ON plataforma_auditoria (usuario_id, en);
 CREATE INDEX auditoria_en_ix ON plataforma_auditoria (en);
-
--- Cambios en datos que nadie firmó: la API siempre fija el usuario; si aparece una fila aquí, alguien escribió por fuera
--- (p. ej. el administrador de arranque de Directus, que no fija plataforma_contexto). 'seed' marca la carga inicial.
-CREATE VIEW plataforma_v_cambios_sin_usuario AS
-SELECT id, en, accion, entidad, entidad_id, ip FROM plataforma_auditoria
-WHERE usuario_id IS NULL AND accion IN ('insert', 'update', 'delete') AND COALESCE(ip, '') <> 'seed';
 
 CREATE TRIGGER auditoria_inmutable BEFORE UPDATE ON plataforma_auditoria
 BEGIN SELECT RAISE(ABORT, 'La auditoría es de solo inserción'); END;
@@ -646,9 +560,8 @@ JOIN catalogo_bloque b  ON b.codigo = a.bloque
 LEFT JOIN catalogo_sala sa ON sa.id = a.sala_id
 GROUP BY a.propuesta_id, s.paralelo_id;
 
--- Solo una propuesta en borrador se edita; una aprobada o reemplazada se copia.
--- Si hay usuario en el contexto, además exige horarios.editar en el departamento del período:
--- un departamento no edita los horarios de otro. Un cambio hecho por una persona queda como 'manual'.
+-- Solo una propuesta en borrador se edita; una aprobada o reemplazada se copia. Quién puede editar lo decide Directus
+-- (permiso horarios.editar en el departamento del período); la API marca el cambio como 'manual' y quién lo hizo.
 CREATE TRIGGER asignacion_borrador_i BEFORE INSERT ON horarios_asignacion
 WHEN (SELECT estado FROM horarios_propuesta WHERE id = NEW.propuesta_id) <> 'borrador'
 BEGIN SELECT RAISE(ABORT, 'La propuesta no está en borrador: cópiela para editarla'); END;
@@ -658,29 +571,8 @@ BEGIN SELECT RAISE(ABORT, 'La propuesta no está en borrador: cópiela para edit
 CREATE TRIGGER asignacion_borrador_d BEFORE DELETE ON horarios_asignacion
 WHEN (SELECT estado FROM horarios_propuesta WHERE id = OLD.propuesta_id) <> 'borrador'
 BEGIN SELECT RAISE(ABORT, 'La propuesta no está en borrador: cópiela para editarla'); END;
-CREATE TRIGGER asignacion_permiso_i BEFORE INSERT ON horarios_asignacion
-WHEN @SIN_EDITAR_NEW@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para editar horarios de este departamento'); END;
-CREATE TRIGGER asignacion_permiso_u BEFORE UPDATE ON horarios_asignacion
-WHEN @SIN_EDITAR_OLD@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para editar horarios de este departamento'); END;
-CREATE TRIGGER asignacion_permiso_d BEFORE DELETE ON horarios_asignacion
-WHEN @SIN_EDITAR_OLD@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para editar horarios de este departamento'); END;
-CREATE TRIGGER asignacion_manual_i AFTER INSERT ON horarios_asignacion
-WHEN @CTX@ IS NOT NULL
-BEGIN
-  UPDATE horarios_asignacion SET origen = 'manual', modificada_por = @CTX@, modificada_en = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-  WHERE propuesta_id = NEW.propuesta_id AND sesion_id = NEW.sesion_id;
-END;
-CREATE TRIGGER asignacion_manual_u AFTER UPDATE ON horarios_asignacion
-WHEN @CTX@ IS NOT NULL AND (OLD.dia IS NOT NEW.dia OR OLD.bloque IS NOT NEW.bloque OR OLD.sala_id IS NOT NEW.sala_id)
-BEGIN
-  UPDATE horarios_asignacion SET origen = 'manual', modificada_por = @CTX@, modificada_en = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-  WHERE propuesta_id = NEW.propuesta_id AND sesion_id = NEW.sesion_id;
-END;
 
--- Aprobar: solo un borrador completo y sin violaciones duras, por quien tiene horarios.aprobar.
+-- Aprobar: solo un borrador completo y sin violaciones duras. Quién puede aprobar lo decide Directus (horarios.aprobar).
 -- La aprobada anterior pasa a 'reemplazada' y se conserva.
 CREATE TRIGGER propuesta_reemplazada_fija BEFORE UPDATE OF estado ON horarios_propuesta
 WHEN OLD.estado = 'reemplazada' AND NEW.estado <> OLD.estado
@@ -691,9 +583,6 @@ BEGIN SELECT RAISE(ABORT, 'Una propuesta aprobada solo puede pasar a reemplazada
 CREATE TRIGGER propuesta_solo_borrador BEFORE UPDATE OF estado ON horarios_propuesta
 WHEN NEW.estado = 'aprobada' AND OLD.estado NOT IN ('aprobada', 'borrador')
 BEGIN SELECT RAISE(ABORT, 'Solo un borrador puede aprobarse'); END;
-CREATE TRIGGER propuesta_permiso BEFORE UPDATE OF estado ON horarios_propuesta
-WHEN NEW.estado = 'aprobada' AND OLD.estado <> 'aprobada' AND @SIN_APROBAR@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para aprobar horarios de este departamento'); END;
 CREATE TRIGGER propuesta_completa BEFORE UPDATE OF estado ON horarios_propuesta
 WHEN NEW.estado = 'aprobada' AND OLD.estado <> 'aprobada' AND NEW.completa = 0
 BEGIN SELECT RAISE(ABORT, 'La propuesta no está completa: faltan sesiones por asignar'); END;
@@ -710,17 +599,10 @@ END;
 CREATE TRIGGER propuesta_aprobacion_registro AFTER UPDATE OF estado ON horarios_propuesta
 WHEN NEW.estado = 'aprobada' AND OLD.estado <> 'aprobada'
 BEGIN
-  UPDATE horarios_propuesta SET aprobada_por = @CTX@, aprobada_en = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = NEW.id;
+  UPDATE horarios_propuesta SET aprobada_en = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = NEW.id;   -- aprobada_por lo envía la API
 END;
 
--- Crear, editar o eliminar restricciones exige restricciones.gestionar en el departamento.
--- Una usada por un horario aprobado se desactiva, no se elimina.
-CREATE TRIGGER restriccion_permiso_i BEFORE INSERT ON horarios_restriccion
-WHEN @SIN_RESTR_NEW@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para gestionar restricciones de este departamento'); END;
-CREATE TRIGGER restriccion_permiso_u BEFORE UPDATE ON horarios_restriccion
-WHEN @SIN_RESTR_NEW@
-BEGIN SELECT RAISE(ABORT, 'Sin permiso para gestionar restricciones de este departamento'); END;
+-- Una restricción usada por un horario aprobado se desactiva, no se elimina.
 CREATE TRIGGER restriccion_usada BEFORE UPDATE ON horarios_restriccion
 WHEN NEW.eliminado_en IS NOT NULL AND OLD.eliminado_en IS NULL AND EXISTS (
        SELECT 1
@@ -968,7 +850,7 @@ UNION ALL
 SELECT 'modulo_satelite', codigo FROM identidad_permiso
  WHERE codigo IN ('horarios.ver', 'catalogo.ver');
 
--- El primer usuario administrador se crea en el despliegue (usuario_rol con departamento_id nulo).
+-- Los usuarios se crean en Directus con su rol y departamento; el configurador crea al Encargado Docente.
 
 INSERT INTO plataforma_modulo (codigo, nombre) VALUES
   ('g1', 'ARGOS y gestión docente'),
@@ -978,19 +860,11 @@ INSERT INTO plataforma_modulo (codigo, nombre) VALUES
 
 """
 
-# Tablas con auditoría de cambios y tablas con DELETE permitido (datos derivados de un borrador)
-AUDITADAS = [
-    "identidad_departamento", "identidad_usuario", "identidad_rol", "identidad_rol_permiso", "identidad_usuario_rol",
-    "catalogo_periodo", "catalogo_programa", "catalogo_asignatura", "catalogo_sala", "catalogo_persona",
-    "catalogo_docente", "catalogo_ayudante",
-    "horarios_liga", "horarios_paralelo", "horarios_sesion", "horarios_restriccion", "horarios_perfil",
-    "horarios_propuesta", "horarios_asignacion", "horarios_sala_externa_autorizada", "horarios_envio_horario",
-    "finanzas_escenario", "finanzas_tarifa", "finanzas_presupuesto", "finanzas_nombramiento",
-]
+# Tablas con DELETE permitido (datos derivados de un borrador) y tablas con borrado lógico
 BORRABLES = {"horarios_asignacion", "horarios_hallazgo", "horarios_corrida_actividad"}
 SIN_BORRADO = [  # todas las tablas de negocio menos las borrables y la auditoría (que tiene su propio trigger)
     "identidad_departamento", "identidad_usuario", "identidad_rol", "identidad_permiso", "identidad_rol_permiso",
-    "identidad_usuario_rol", "plataforma_importacion", "plataforma_fila_importada", "plataforma_modulo",
+    "plataforma_importacion", "plataforma_fila_importada", "plataforma_modulo",
     "catalogo_periodo", "catalogo_programa", "catalogo_asignatura", "catalogo_plan_nivel", "catalogo_dia",
     "catalogo_bloque", "catalogo_sala", "catalogo_persona", "catalogo_docente", "catalogo_ayudante",
     "horarios_liga", "horarios_paralelo", "horarios_paralelo_docente", "horarios_paralelo_grupo", "horarios_sesion",
@@ -1002,59 +876,11 @@ SIN_BORRADO = [  # todas las tablas de negocio menos las borrables y la auditor�
 ]
 
 
-def columnas(tabla, ddl):
-    """Nombres de columna de una tabla, leídos de su CREATE TABLE."""
-    ini = ddl.index(f"CREATE TABLE {tabla} (")
-    fin = ddl.index(") STRICT;", ini)
-    cols = []
-    for linea in ddl[ini:fin].splitlines()[1:]:
-        t = linea.strip()
-        if not t or t.startswith(("--", "PRIMARY", "UNIQUE", "CHECK", "@SD@", "OR ", "AND ")):
-            continue
-        cols.append(t.split()[0])
-    if "@SD@" in ddl[ini:fin]:
-        cols += ["eliminado_en", "eliminado_por"]
-    return cols
-
-
-def val(fila, c):
-    return f"json({fila}.{c})" if c in JSON_COLS else f"{fila}.{c}"
-
-
-def triggers_auditoria(ddl):
+def triggers_borrado():
     out = ["-- ---------------------------------------------------------------------",
-           "-- 8. Auditoría de cambios y borrado lógico (generados por bd/generar_esquema.py)",
-           "-- ---------------------------------------------------------------------"]
-    for t in AUDITADAS:
-        cols = [c for c in columnas(t, ddl) if c not in OCULTAS]
-        dep_n = "NEW.departamento_id" if "departamento_id" in cols else "NULL"
-        dep_o = "OLD.departamento_id" if "departamento_id" in cols else "NULL"
-        eid_n = "NEW.id" if "id" in cols else ("NEW.codigo" if "codigo" in cols else "NULL")
-        eid_o = eid_n.replace("NEW", "OLD")
-        obj = lambda fila: "json_object(" + ", ".join(f"'{c}', {val(fila, c)}" for c in cols) + ")"
-        cambia = " OR ".join(f"OLD.{c} IS NOT NEW.{c}" for c in cols)
-        sel = lambda fila, otra: " UNION ALL ".join(
-            f"SELECT '{c}' AS k, {val(fila, c)} AS v WHERE OLD.{c} IS NOT NEW.{c}" for c in cols)
-        out.append(f"""CREATE TRIGGER auditar_{t}_i AFTER INSERT ON {t}
-BEGIN
-  INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, despues)
-  VALUES ({CTX}, {IPX}, {dep_n}, 'insert', '{t}', {eid_n}, {obj('NEW')});
-END;
-CREATE TRIGGER auditar_{t}_u AFTER UPDATE ON {t}
-WHEN {cambia}
-BEGIN
-  INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes, despues)
-  VALUES ({CTX}, {IPX}, {dep_n}, 'update', '{t}', {eid_n},
-          (SELECT json_group_object(k, v) FROM ({sel('OLD', 'NEW')})),
-          (SELECT json_group_object(k, v) FROM ({sel('NEW', 'OLD')})));
-END;
-CREATE TRIGGER auditar_{t}_d AFTER DELETE ON {t}
-BEGIN
-  INSERT INTO plataforma_auditoria (usuario_id, ip, departamento_id, accion, entidad, entidad_id, antes)
-  VALUES ({CTX}, {IPX}, {dep_o}, 'delete', '{t}', {eid_o}, {obj('OLD')});
-END;
-""")
-    out.append("-- Nada se elimina de forma efectiva: el DELETE se rechaza (use eliminado_en).")
+           "-- 8. Borrado lógico (generado por db/generar_esquema.py)",
+           "-- ---------------------------------------------------------------------",
+           "-- Nada se elimina de forma efectiva: el DELETE se rechaza (use eliminado_en)."]
     for t in SIN_BORRADO:
         out.append(f"CREATE TRIGGER sin_borrado_{t} BEFORE DELETE ON {t}\n"
                    f"BEGIN SELECT RAISE(ABORT, 'Borrado lógico: marque eliminado_en en {t}'); END;")
@@ -1064,20 +890,8 @@ END;
 
 def main():
     ddl = IDENTIDAD + PLATAFORMA + CATALOGO + HORARIOS + FINANZAS + PROYECCION
-    cuerpo = ddl
-    sub = {
-        "@SIN_USUARIOS@": sin_permiso("usuarios.gestionar", "NEW.departamento_id"),
-        "@SIN_EDITAR_NEW@": sin_permiso("horarios.editar", DEP_PROPUESTA.format("NEW.propuesta_id")),
-        "@SIN_EDITAR_OLD@": sin_permiso("horarios.editar", DEP_PROPUESTA.format("OLD.propuesta_id")),
-        "@SIN_APROBAR@": sin_permiso("horarios.aprobar", DEP_PERIODO.format("NEW.periodo_id")),
-        "@SIN_RESTR_NEW@": sin_permiso("restricciones.gestionar", "NEW.departamento_id"),
-        "@CTX@": CTX, "@TS@": TS, "@SD@": SD,
-    }
-    aud = triggers_auditoria(ddl)          # lee las columnas antes de sustituir @SD@
-    for k, v in sub.items():
-        cuerpo = cuerpo.replace(k, v)
-    cuerpo = cuerpo.replace("@SD@,", SD + ",")
-    sys.stdout.write(CABECERA + cuerpo + DATOS + aud + "\nCOMMIT;\n")
+    cuerpo = ddl.replace("@TS@", TS).replace("@SD@,", SD + ",").replace("@SD@", SD)
+    sys.stdout.write(CABECERA + cuerpo + DATOS + triggers_borrado() + "\nCOMMIT;\n")
 
 
 main()
