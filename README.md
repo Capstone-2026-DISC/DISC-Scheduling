@@ -17,26 +17,19 @@ Cada semestre el Encargado Docente arma a mano la oferta académica del departam
 ## Arquitectura
 
 ```mermaid
-flowchart TB
-    persona(["Persona usuaria"]) --> frontend["frontend<br/>Next.js"]
-    frontend -->|"HTTP"| api["api<br/>FastAPI"]
+flowchart LR
+    persona(["Persona usuaria"]) --> frontend["frontend<br/>Next.js"] --> api["api<br/>FastAPI"]
 
     subgraph nucleo["Núcleo"]
-        direction TB
-        directus["directus<br/>permisos, departamentos y actividad"]
-        db1[("plataforma.db")]
-        directus -->|"único acceso a la base"| db1
+        directus["directus<br/>permisos y actividad"] --> db1[("plataforma.db")]
     end
 
     subgraph sat["Satélites"]
-        direction TB
-        dsat["directus-satelites<br/>token y límite por grupo"]
-        db2[("satelites.db<br/>copia sin datos personales")]
-        dsat -->|"único acceso a la base"| db2
+        dsat["directus-satelites<br/>token y límite por grupo"] --> db2[("satelites.db<br/>sin datos personales")]
     end
 
-    api -->|"con la sesión de cada persona"| directus
-    modulos["módulos de los grupos<br/>g1 a g4"] -->|"API de Directus con su token"| dsat
+    api -->|"sesión de la persona"| directus
+    modulos["módulos de los grupos<br/>g1 a g4"] -->|"token del grupo"| dsat
 ```
 
 La API no abre `plataforma.db`: todo lo que lee o escribe del núcleo pasa por Directus. Los módulos de los grupos tampoco tocan el núcleo, hablan con su propio Directus. Lo único que la API hace sin Directus es regenerar la copia `satelites.db` (sin datos personales) que leen los módulos; esa copia no es el núcleo.
