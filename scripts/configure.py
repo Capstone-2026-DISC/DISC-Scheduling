@@ -13,7 +13,7 @@ values = {
     "DIRECTUS_SECRET": secrets.token_urlsafe(48),
     "ADMIN_EMAIL": "admin@example.com",
     "ADMIN_PASSWORD": secrets.token_urlsafe(32),
-    "JWT_SECRET": secrets.token_urlsafe(48),
+    "API_SERVICE_TOKEN": secrets.token_urlsafe(48),
     "DATA_KEYS": "k1=" + clave32(),
     "DATA_KEY_ID": "k1",
     "INDEX_KEY": clave32(),

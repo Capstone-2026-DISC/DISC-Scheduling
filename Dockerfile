@@ -11,4 +11,4 @@ COPY backend/app ./app
 COPY db/esquema_plataforma.sql ./db/esquema_plataforma.sql
 USER api
 EXPOSE 8000
-CMD ["sh", "-c", "python -m app.seed && exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"]
+CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

@@ -3,7 +3,6 @@ que usa plataforma_fila_importada.errores: {columna, gravedad, falla, como_corre
 import csv
 import io
 import re
-import sqlite3
 from datetime import date
 
 from ..core.pii import normalizar_rut
@@ -88,22 +87,34 @@ def _celda(col: Col, valor: str):
         return None, error(col.nombre, f"Valor{visto} inválido: {e}.", f"Corrija «{col.nombre}».{permitidos}{ejemplo}")
 
 
-def _buscar(con, sql: str, *args):
-    fila = con.execute(sql, args).fetchone()
-    return None if fila is None else fila[0]
+class Referencias:
+    """Dónde se buscan las claves naturales (código, RUT, NRC, periodo) para traducirlas a ids y comprobar duplicados.
+    La implementación real (DirectusReferencias) consulta Directus con la sesión de quien importa, así que solo ve lo
+    que esa persona puede ver. Sin referencias solo se revisa la forma de cada celda."""
+
+    def departamento(self, codigo: str) -> int | None: ...
+    def periodo(self, departamento_id: int, codigo: str) -> int | None: ...
+    def persona(self, rut: str) -> int | None: ...
+    def es_docente(self, persona_id: int) -> bool: ...
+    def asignatura(self, codigo: str) -> int | None: ...
+    def paralelo(self, nrc, periodo_id: int | None) -> int | None: ...
+    def categoria(self, tipo: str, letra: str) -> int | None: ...
+    def existe(self, tabla: str, filtros: dict) -> bool: ...
+    def precargar(self, plantilla: Plantilla, filas: list[dict]) -> None:
+        """Consulta de una vez lo que van a necesitar todas las filas (por ejemplo las personas por RUT)."""
 
 
-def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict, cif=None) -> tuple[dict, list[dict]]:
+def resolver(refs: Referencias, plantilla: Plantilla, datos: dict, cif=None) -> tuple[dict, list[dict]]:
     """Traduce claves naturales a ids. Devuelve las columnas de la base y los errores de referencia.
     `cif` (core.pii.Cifrador) cifra el RUT y el correo y permite buscar personas por su índice ciego; sin él no se
     puede comprobar ni cargar nada que dependa de una persona."""
     destino, errores = {}, []
-    dept = None
     dcol = next((c for c in plantilla.columnas if c.ref == "departamento"), None)
     codigo_depto = (datos.get(dcol.nombre) if dcol else None) or "DISC"
-    dept = _buscar(con, "SELECT id FROM identidad_departamento WHERE codigo = upper(?) AND eliminado_en IS NULL", codigo_depto)
+    dept = refs.departamento(codigo_depto)
     if dcol and dept is None:
-        errores.append(error(dcol.nombre, f"El departamento «{codigo_depto}» no existe.", "Use el código de un departamento creado, por ejemplo DISC."))
+        errores.append(error(dcol.nombre, f"El departamento «{codigo_depto}» no existe o no tiene acceso a él.",
+                             "Use el código de un departamento creado, por ejemplo DISC."))
     periodo_id = None
     for col in plantilla.columnas:
         valor = datos.get(col.nombre)
@@ -119,7 +130,7 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict, cif=Non
                 destino[dest] = dept
             continue
         if col.ref == "periodo":
-            periodo_id = _buscar(con, "SELECT id FROM catalogo_periodo WHERE departamento_id = ? AND codigo = ?", dept or 1, valor) if valor else None
+            periodo_id = refs.periodo(dept or 1, valor) if valor else None
             if valor and periodo_id is None:
                 errores.append(error(col.nombre, f"El periodo {valor} no existe.", "Cargue primero la plantilla catalogo_periodo, o corrija el código."))
             elif dest != "-" and periodo_id is not None:
@@ -130,28 +141,28 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict, cif=Non
         if col.ref == "persona_rut":
             if cif is None:
                 continue                                   # sin las claves no se puede ubicar a la persona
-            pid = _buscar(con, "SELECT id FROM catalogo_persona WHERE rut_indice = ? AND eliminado_en IS NULL", cif.indice_rut(valor))
+            pid = refs.persona(valor)
             if pid is None:
                 errores.append(error(col.nombre, f"No hay una persona con RUT {valor}.", "Cargue primero la plantilla catalogo_persona, o corrija el RUT."))
-            elif dest == "docente_id" and _buscar(con, "SELECT 1 FROM catalogo_docente WHERE persona_id = ?", pid) is None:
+            elif dest == "docente_id" and not refs.es_docente(pid):
                 errores.append(error(col.nombre, f"La persona {valor} no es docente.", "Cargue primero la plantilla catalogo_docente."))
             else:
                 destino[dest] = pid
         elif col.ref == "asignatura":
-            aid = _buscar(con, "SELECT id FROM catalogo_asignatura WHERE codigo = ? AND eliminado_en IS NULL", valor)
+            aid = refs.asignatura(valor)
             if aid is None:
                 errores.append(error(col.nombre, f"No existe la asignatura {valor}.", "Cargue primero la plantilla catalogo_asignatura, o corrija el código."))
             else:
                 destino[dest] = aid
         elif col.ref == "paralelo_nrc":
-            pid = _buscar(con, "SELECT id FROM horarios_paralelo WHERE nrc = ? AND periodo_id = ? AND eliminado_en IS NULL", valor, periodo_id)
+            pid = refs.paralelo(valor, periodo_id)
             if pid is None:
                 errores.append(error(col.nombre, f"No existe un paralelo con NRC {valor} en ese periodo.", "Cargue primero la plantilla horarios_paralelo, o corrija el NRC."))
             else:
                 destino[dest] = pid
         elif col.ref == "categoria_letra":
             letra = (datos.get("letra") or "").upper()
-            cid = _buscar(con, "SELECT id FROM finanzas_categoria WHERE tipo_persona = ? AND letra = ?", valor, letra)
+            cid = refs.categoria(valor, letra)
             if cid is None:
                 errores.append(error("letra", f"No existe la categoría {valor} letra «{letra}».", "Use una letra de categoría existente (A a D para profesor_hora, A a C para ayudante)."))
             else:
@@ -166,9 +177,9 @@ def resolver(con: sqlite3.Connection, plantilla: Plantilla, datos: dict, cif=Non
     return destino, errores
 
 
-def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = None, cif=None) -> dict:
-    """Informe: {ok, encabezados, filas: [{fila, datos, destino, errores}], resumen}. Con `con` se comprueban referencias
-    y duplicados contra la base; sin ella solo la forma de cada celda."""
+def validar(plantilla: Plantilla, texto: str, refs: Referencias | None = None, cif=None) -> dict:
+    """Informe: {ok, encabezados, filas: [{fila, datos, destino, errores}], resumen}. Con `refs` se comprueban referencias
+    y duplicados; sin ellas solo la forma de cada celda."""
     encabezados, filas = leer_csv(texto)
     esperados = [c.nombre for c in plantilla.columnas]
     general = []
@@ -180,7 +191,7 @@ def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = N
         general.append(error(",".join(sobran), f"Columnas desconocidas: {', '.join(sobran)}.", "Quítelas o corrija el nombre; los encabezados deben coincidir con la plantilla."))
     if not filas and not general:
         general.append(error("", "El archivo no tiene filas de datos.", "Agregue al menos una fila debajo del encabezado."))
-    resultado, vistas = [], {}
+    forma = []
     for n, fila in enumerate(filas, start=2):                 # la fila 1 es el encabezado
         errores, datos = [], {}
         if not faltan:
@@ -189,9 +200,14 @@ def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = N
                 datos[col.nombre] = val
                 if err:
                     errores.append(err)
+        forma.append((n, datos, errores))
+    if refs is not None:
+        refs.precargar(plantilla, [d for _, d, e in forma if not e])
+    resultado, vistas = [], {}
+    for n, datos, errores in forma:
         destino = {}
-        if con is not None and not errores:
-            destino, e_ref = resolver(con, plantilla, datos, cif)
+        if refs is not None and not errores:
+            destino, e_ref = resolver(refs, plantilla, datos, cif)
             errores += e_ref
             # la clave de una persona es su índice ciego; sin las claves esa comprobación no se puede hacer
             comprobable = cif is not None or not any(c.es_pii for c in plantilla.columnas if c.nombre in plantilla.clave)
@@ -204,8 +220,7 @@ def validar(plantilla: Plantilla, texto: str, con: sqlite3.Connection | None = N
                         c.destino or REF_DESTINO.get(c.ref or "", c.nombre))
                     if dest in destino:
                         clave_db[dest] = destino[dest]
-                if clave_db and con.execute(f"SELECT 1 FROM {plantilla.tabla_db} WHERE " + " AND ".join(f"{k} IS ?" for k in clave_db),
-                                            list(clave_db.values())).fetchone():
+                if clave_db and refs.existe(plantilla.tabla_db, clave_db):
                     errores.append(error(",".join(plantilla.clave), "Ya existe una fila con esa clave en la base.",
                                          "Quite la fila: la importación solo agrega, no actualiza."))
         if not errores:

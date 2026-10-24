@@ -1,163 +1,161 @@
-import sqlite3
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ....core import audit, security
-from ....core.openapi import ERRORES_ESCRITURA, RESPUESTAS
 from ....core.config import Settings
-from ....core.deps import Usuario, get_conn, get_ip, get_settings, requiere, usuario_actual
-from ....core.recurso import traducir_error
+from ....core.deps import Usuario, get_directus, get_ip, get_settings, requiere, usuario_actual
+from ....core.directus import Directus, exigir
+from ....core.openapi import ERRORES_ESCRITURA, RESPUESTAS
 from . import repository as repo
 from . import service
-from .schemas import (CambioClaveIn, LoginIn, PerfilOut, RefreshIn, RolAsignacionIn, TokenOut, UsuarioIn)
+from .schemas import (CambioClaveIn, LoginIn, LogoutIn, PerfilOut, RefreshIn, RolAsignacionIn, TokenOut, UsuarioIn)
 
 auth = APIRouter(prefix="/auth", tags=["autenticación"])
 gestion = APIRouter(tags=["usuarios y roles"], responses={**RESPUESTAS, **ERRORES_ESCRITURA})
 
 
 @auth.post("/login", response_model=TokenOut, summary="Iniciar sesión",
-           description="Entrega un **token de acceso** (JWT, 10 minutos) y un **refresh token** (7 días, de un solo uso). "
-                       "Tras 5 intentos fallidos la cuenta se bloquea 15 minutos, y hay un tope de 10 intentos por minuto "
-                       "por IP. Cada intento, exitoso o no, queda en la auditoría con la IP.",
+           description="Entrega un **token de acceso** (10 minutos) y un **refresh token** (7 días, de un solo uso). Los emite "
+                       "Directus. Tras 5 intentos fallidos la cuenta se bloquea 15 minutos, y hay un tope de 10 intentos por "
+                       "minuto por IP. Cada intento fallido queda en la auditoría con la IP; los exitosos, en el registro de "
+                       "actividad de Directus y en la auditoría.",
            responses={401: {"description": "Correo o clave incorrectos (el mensaje no distingue cuál)."},
+                      403: {"description": "Las credenciales son válidas pero la cuenta no tiene un rol de la plataforma."},
                       422: {"description": "El cuerpo no tiene `email` y `clave`."},
                       423: {"description": "Cuenta bloqueada temporalmente por intentos fallidos; reintente pasado el bloqueo."},
                       429: {"description": "Demasiados intentos desde esa IP; espere un minuto."}})
-def login(datos: LoginIn, request: Request, conn: sqlite3.Connection = Depends(get_conn),
+def login(datos: LoginIn, request: Request, directus: Directus = Depends(get_directus),
           settings: Settings = Depends(get_settings), ip: str | None = Depends(get_ip)):
     if not request.app.state.limite_login.permitir(ip or "?"):
         raise HTTPException(429, "Demasiados intentos; espere un minuto")
-    return service.login(conn, settings, datos.email, datos.clave, ip)
+    return service.login(directus, settings, datos.email, datos.clave, ip)
 
 
 @auth.post("/refresh", response_model=TokenOut, summary="Renovar la sesión",
            description="Cambia un refresh token por un par nuevo de tokens. **El refresh token es de un solo uso**: guarde "
-                       "siempre el nuevo. Si se presenta uno ya usado se interpreta como robo y se cierra toda la sesión.",
+                       "siempre el nuevo. Uno ya usado se rechaza con 401.",
            responses={401: {"description": "Refresh token desconocido, vencido, ya usado o de una sesión cerrada."}})
-def refresh(datos: RefreshIn, conn: sqlite3.Connection = Depends(get_conn),
-            settings: Settings = Depends(get_settings), ip: str | None = Depends(get_ip)):
-    return service.refrescar(conn, settings, datos.refresh_token, ip)
+def refresh(datos: RefreshIn, directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip)):
+    return service.refrescar(directus, datos.refresh_token, ip)
 
 
 @auth.post("/logout", status_code=204, summary="Cerrar sesión",
-           description="Revoca la sesión actual. El token de acceso deja de valer de inmediato, no al vencer.",
+           description="Cierra la sesión. Envíe el `refresh_token` para que Directus lo invalide; el token de acceso actual deja "
+                       "de valer de inmediato en esta API aunque Directus lo mantendría hasta que venza.",
            responses={401: {"description": "Token ausente, inválido o ya revocado."}})
-def logout(usuario: Usuario = Depends(usuario_actual), conn: sqlite3.Connection = Depends(get_conn),
-           ip: str | None = Depends(get_ip)):
-    service.cerrar_sesion(conn, usuario.id, usuario.familia, ip)
+def logout(request: Request, datos: LogoutIn | None = None, usuario: Usuario = Depends(usuario_actual),
+           directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip)):
+    service.cerrar_sesion(directus, request.app.state, usuario, datos.refresh_token if datos else None, ip)
     return Response(status_code=204)
 
 
 @auth.post("/cambiar-clave", status_code=204, summary="Cambiar la clave",
            description="Exige la clave actual. La nueva debe tener al menos 12 caracteres, mezclar letras con números o "
-                       "símbolos y no contener el correo. Cierra todas las sesiones del usuario, incluida esta.",
+                       "símbolos y no contener el correo. Directus cierra todas las sesiones renovables del usuario y esta API "
+                       "rechaza el token de acceso actual.",
            responses={401: {"description": "Token ausente o inválido."},
                       403: {"description": "La clave actual no coincide."},
                       422: {"description": "La clave nueva no cumple la política; `detail` dice por qué."}})
-def cambiar_clave(datos: CambioClaveIn, usuario: Usuario = Depends(usuario_actual),
-                  conn: sqlite3.Connection = Depends(get_conn), settings: Settings = Depends(get_settings),
+def cambiar_clave(datos: CambioClaveIn, request: Request, usuario: Usuario = Depends(usuario_actual),
+                  directus: Directus = Depends(get_directus), settings: Settings = Depends(get_settings),
                   ip: str | None = Depends(get_ip)):
-    service.cambiar_clave(conn, settings, usuario.id, datos.actual, datos.nueva, ip)
+    service.cambiar_clave(directus, settings, request.app.state, usuario, datos.actual, datos.nueva, ip)
     return Response(status_code=204)
 
 
 @auth.get("/yo", response_model=PerfilOut, summary="Perfil y permisos del usuario",
-          description="Devuelve quién es el usuario y sus permisos. Cada permiso trae la lista de departamentos donde vale; "
-                      "`null` en la lista significa todos los departamentos. Úselo para decidir qué mostrar en el frontend.",
+          description="Devuelve quién es el usuario, su rol y sus permisos. Cada permiso trae la lista de departamentos donde "
+                      "vale; `null` en la lista significa todos los departamentos. Úselo para decidir qué mostrar en el "
+                      "frontend.",
           responses={401: {"description": "Token ausente, inválido o vencido."}})
 def yo(usuario: Usuario = Depends(usuario_actual)):
-    return PerfilOut(id=usuario.id, email=usuario.email, nombre=usuario.nombre,
-                     permisos={p: sorted(d for d in deptos if d is not None) + ([None] if None in deptos else [])
-                               for p, deptos in sorted(usuario.permisos.items())})
+    return service.perfil(usuario)
 
 
-def _ejecutar(accion, *args):
-    try:
-        return accion(*args)
-    except sqlite3.Error as exc:
-        raise traducir_error(exc) from exc
+def _usuario_o_404(directus: Directus, uid: int) -> dict:
+    espejo = repo.espejo_por_id(directus, uid)
+    if not espejo:
+        raise HTTPException(404, "No encontrado")
+    return espejo
 
 
-@gestion.get("/usuarios", summary="Listar usuarios", description="Requiere `usuarios.gestionar`. Incluye los roles vigentes de cada usuario.")
-def listar_usuarios(_: Usuario = Depends(requiere("usuarios.gestionar")), conn: sqlite3.Connection = Depends(get_conn)):
-    return repo.listar_usuarios(conn)
+def _evento(directus, ip, actor: Usuario, accion: str, uid: int, detalle: dict, departamento_id=None) -> None:
+    audit.registrar(directus, usuario_id=actor.mirror_id, ip=ip, accion=accion, entidad="identidad_usuario", entidad_id=uid,
+                    detalle=detalle, departamento_id=departamento_id)
 
 
-@gestion.post("/usuarios", status_code=201, summary="Crear un usuario", description="Requiere `usuarios.gestionar`. La clave debe cumplir la política (12 o más caracteres, letras con números o símbolos).")
+@gestion.get("/usuarios", summary="Listar usuarios",
+             description="Requiere `usuarios.gestionar`. Incluye el rol y el departamento de cada usuario.")
+def listar_usuarios(_: Usuario = Depends(requiere("usuarios.gestionar")), directus: Directus = Depends(get_directus)):
+    return repo.listar_usuarios(directus)
+
+
+@gestion.post("/usuarios", status_code=201, summary="Crear un usuario",
+              description="Requiere `usuarios.gestionar`. Se crea sin rol: no puede entrar hasta que se le asigne uno. La clave "
+                          "debe cumplir la política (12 o más caracteres, letras con números o símbolos).")
 def crear_usuario(datos: UsuarioIn, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                  conn: sqlite3.Connection = Depends(get_conn), settings: Settings = Depends(get_settings),
+                  directus: Directus = Depends(get_directus), settings: Settings = Depends(get_settings),
                   ip: str | None = Depends(get_ip)):
     email = datos.email.strip().lower()
     problema = security.clave_valida(datos.clave, email, settings.clave_minima)
     if problema:
         raise HTTPException(422, problema)
-    if repo.usuario_por_email(conn, email):
+    if repo.usuario_por_email(directus, email):
         raise HTTPException(409, "Ya existe un usuario con ese correo")
-    nuevo = _ejecutar(repo.crear_usuario, conn, usuario.id, ip, email, datos.nombre, security.hashear_clave(datos.clave))
+    nuevo, _ = repo.crear_usuario(directus, email, datos.nombre, datos.clave)
+    _evento(directus, ip, usuario, "usuario_creado", nuevo, {"email": email})
     return {"id": nuevo, "email": email}
 
 
-@gestion.delete("/usuarios/{uid}", status_code=204, summary="Eliminar un usuario", description="Requiere `usuarios.gestionar`. Borrado lógico: el usuario deja de poder entrar y sus sesiones se cierran. No se puede eliminar la propia cuenta.")
+@gestion.delete("/usuarios/{uid}", status_code=204, summary="Eliminar un usuario",
+                description="Requiere `usuarios.gestionar`. Borrado lógico: el usuario queda suspendido y no puede entrar. "
+                            "No se puede eliminar la propia cuenta.")
 def eliminar_usuario(uid: int, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                     conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
-    if uid == usuario.id:
+                     directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip)):
+    espejo = _usuario_o_404(directus, uid)
+    if espejo["directus_id"] == usuario.id:
         raise HTTPException(409, "No puede eliminar su propia cuenta")
-    if not _ejecutar(repo.eliminar_usuario, conn, usuario.id, ip, uid):
-        raise HTTPException(404, "No encontrado")
+    repo.eliminar_usuario(directus, uid, espejo["directus_id"], usuario.mirror_id)
+    _evento(directus, ip, usuario, "usuario_eliminado", uid, {})
     return Response(status_code=204)
 
 
-@gestion.get("/roles", summary="Listar roles y sus permisos", description="Requiere `usuarios.gestionar`.")
-def listar_roles(_: Usuario = Depends(requiere("usuarios.gestionar")), conn: sqlite3.Connection = Depends(get_conn)):
-    return repo.listar_roles(conn)
+@gestion.get("/roles", summary="Listar roles y sus permisos",
+             description="Requiere `usuarios.gestionar`. Los permisos de un rol se cambian con el configurador "
+                         "(`directus_setup rol-permiso`), no desde la API.")
+def listar_roles(_: Usuario = Depends(requiere("usuarios.gestionar")), directus: Directus = Depends(get_directus)):
+    return repo.listar_roles(directus)
 
 
-@gestion.post("/usuarios/{uid}/roles", status_code=201, summary="Asignar un rol", description="Requiere `usuarios.gestionar` en ese departamento. `departamento_id` nulo = todos los departamentos. Nadie puede modificar sus propios roles. Queda auditado.")
+@gestion.post("/usuarios/{uid}/roles", status_code=201, summary="Asignar un rol",
+              description="Requiere `usuarios.gestionar` en ese departamento. `departamento_id` nulo = todos los departamentos. "
+                          "Reemplaza el rol que tuviera. Nadie puede modificar sus propios roles. Queda auditado.")
 def asignar_rol(uid: int, datos: RolAsignacionIn, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
-    if not repo.usuario_por_id(conn, uid):
-        raise HTTPException(404, "No encontrado")
-    try:
-        nuevo = repo.asignar_rol(conn, usuario.id, ip, uid, datos.rol, datos.departamento_id)
-    except sqlite3.Error as exc:
-        error = traducir_error(exc)
-        if error.status_code == 403:
-            audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="acceso_denegado", resultado="denegado",
-                            entidad="identidad_usuario_rol", entidad_id=uid,
-                            detalle={"rol": datos.rol, "departamento_id": datos.departamento_id})
-        raise error from exc
-    audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="permisos_cambiados", entidad="identidad_usuario",
-                    entidad_id=uid, departamento_id=datos.departamento_id,
-                    detalle={"operacion": "asignar_rol", "rol": datos.rol, "asignacion_id": nuevo})
-    return {"id": nuevo}
+                directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip)):
+    espejo = _usuario_o_404(directus, uid)
+    if espejo["directus_id"] == usuario.id:
+        raise HTTPException(409, "Nadie puede modificar sus propios roles")
+    if not usuario.puede_en("usuarios.gestionar", datos.departamento_id):
+        audit.registrar(directus, usuario_id=usuario.mirror_id, ip=ip, accion="acceso_denegado", resultado="denegado",
+                        entidad="identidad_usuario", entidad_id=uid, departamento_id=datos.departamento_id,
+                        detalle={"operacion": "asignar_rol", "rol": datos.rol})
+        raise HTTPException(403, "Sin permiso para gestionar usuarios en ese departamento")
+    rol_id = repo.rol_directus_id(directus, datos.rol)
+    if not rol_id:
+        raise HTTPException(422, f"El rol {datos.rol} no existe")
+    repo.asignar_rol(directus, espejo["directus_id"], rol_id, datos.departamento_id)
+    _evento(directus, ip, usuario, "permisos_cambiados", uid, {"operacion": "asignar_rol", "rol": datos.rol},
+            datos.departamento_id)
+    return {"usuario_id": uid, "rol": datos.rol, "departamento_id": datos.departamento_id}
 
 
-@gestion.delete("/usuarios/{uid}/roles/{asignacion_id}", status_code=204, summary="Revocar un rol", description="Requiere `usuarios.gestionar`. Marca la asignación como revocada. Queda auditado.")
-def revocar_rol(uid: int, asignacion_id: int, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
-    if not _ejecutar(repo.revocar_rol, conn, usuario.id, ip, asignacion_id):
-        raise HTTPException(404, "No encontrado")
-    audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="permisos_cambiados", entidad="identidad_usuario",
-                    entidad_id=uid, detalle={"operacion": "revocar_rol", "asignacion_id": asignacion_id})
-    return Response(status_code=204)
-
-
-@gestion.put("/roles/{rol}/permisos/{permiso}", status_code=204, summary="Dar un permiso a un rol", description="Requiere `usuarios.gestionar`. Surte efecto de inmediato. Queda auditado.")
-def dar_permiso(rol: str, permiso: str, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
-    _ejecutar(repo.dar_permiso, conn, usuario.id, ip, rol, permiso)
-    audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="permisos_cambiados", entidad="identidad_rol",
-                    entidad_id=rol, detalle={"operacion": "dar_permiso", "permiso": permiso})
-    return Response(status_code=204)
-
-
-@gestion.delete("/roles/{rol}/permisos/{permiso}", status_code=204, summary="Quitar un permiso a un rol", description="Requiere `usuarios.gestionar`. No se pueden quitar permisos al rol de sistema `administrador`. Queda auditado.")
-def quitar_permiso(rol: str, permiso: str, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
-                   conn: sqlite3.Connection = Depends(get_conn), ip: str | None = Depends(get_ip)):
-    if rol == "administrador":
-        raise HTTPException(409, "No se quitan permisos al rol de sistema")
-    if not _ejecutar(repo.quitar_permiso, conn, usuario.id, ip, rol, permiso):
-        raise HTTPException(404, "No encontrado")
-    audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="permisos_cambiados", entidad="identidad_rol",
-                    entidad_id=rol, detalle={"operacion": "quitar_permiso", "permiso": permiso})
+@gestion.delete("/usuarios/{uid}/roles", status_code=204, summary="Quitar el rol a un usuario",
+                description="Requiere `usuarios.gestionar`. El usuario queda sin rol y no puede entrar. Nadie puede modificar "
+                            "sus propios roles. Queda auditado.")
+def revocar_rol(uid: int, usuario: Usuario = Depends(requiere("usuarios.gestionar")),
+                directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip)):
+    espejo = _usuario_o_404(directus, uid)
+    if espejo["directus_id"] == usuario.id:
+        raise HTTPException(409, "Nadie puede modificar sus propios roles")
+    repo.revocar_rol(directus, espejo["directus_id"])
+    _evento(directus, ip, usuario, "permisos_cambiados", uid, {"operacion": "quitar_rol"})
     return Response(status_code=204)

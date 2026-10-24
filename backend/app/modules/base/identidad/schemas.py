@@ -13,7 +13,7 @@ class LoginIn(Base):
 
 class TokenOut(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{
-        "access_token": "eyJhbGciOiJIUzI1NiIs…", "refresh_token": "u3Qx…", "token_type": "bearer", "expires_in": 600}]})
+        "access_token": "eyJhbGciOiJIUzI1NiIs…", "refresh_token": "d4f1…", "token_type": "bearer", "expires_in": 600}]})
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -21,8 +21,13 @@ class TokenOut(BaseModel):
 
 
 class RefreshIn(Base):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"refresh_token": "u3Qx…"}]})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"refresh_token": "d4f1…"}]})
     refresh_token: str = Field(min_length=20, max_length=200)
+
+
+class LogoutIn(Base):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"refresh_token": "d4f1…"}]})
+    refresh_token: str | None = Field(default=None, min_length=20, max_length=200)
 
 
 class CambioClaveIn(Base):
@@ -43,9 +48,10 @@ class RolAsignacionIn(Base):
 
 class PerfilOut(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{
-        "id": 2, "email": "usuario.prueba@example.com", "nombre": "Usuario de prueba",
+        "id": 2, "email": "usuario.prueba@example.com", "nombre": "Usuario de prueba", "rol": "consulta",
         "permisos": {"catalogo.ver": [1], "horarios.ver": [1], "restricciones.ver": [1]}}]})
-    id: int
+    id: int | None
     email: str
     nombre: str
+    rol: str
     permisos: dict[str, list[int | None]]

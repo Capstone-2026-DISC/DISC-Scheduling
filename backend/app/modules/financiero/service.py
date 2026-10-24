@@ -12,5 +12,5 @@ def routers() -> list[APIRouter]:
         crear_router(r.PRESUPUESTO, ruta="presupuestos", entrada=s.PresupuestoIn, parcial=s.PresupuestoPatch, **comunes),
         crear_router(r.ESCENARIO, ruta="escenarios", entrada=s.EscenarioIn, parcial=s.EscenarioPatch, **comunes),
         crear_router(r.NOMBRAMIENTO, ruta="nombramientos", entrada=s.NombramientoIn, parcial=s.NombramientoPatch,
-                     depto_payload=("periodo_id", "SELECT departamento_id FROM catalogo_periodo WHERE id = ?"), **comunes),
+                     relacion=("periodo_id", "catalogo_periodo"), **comunes),
     ]

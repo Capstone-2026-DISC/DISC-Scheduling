@@ -1,19 +1,19 @@
 """POST /importaciones/{coleccion}: valida un CSV con la plantilla de la colección y, si se pide, lo carga.
 
 El cuerpo es el CSV (Content-Type: text/csv). Sin `confirmar` solo valida y deja la importación en 'lista' o
-'con_errores'. Con `confirmar=true` carga todas las filas en una sola transacción, o ninguna. Cada fila cruda y sus
-errores quedan en plataforma_fila_importada, y la persona y la IP en la auditoría."""
+'con_errores'. Con `confirmar=true` carga todas las filas de la colección en una sola petición a Directus, que es todo o
+nada. Todo va con la sesión de quien importa, así que Directus aplica sus permisos y su registro de actividad. Cada fila
+cruda y sus errores quedan en plataforma_fila_importada, con el RUT y el correo cifrados."""
 import hashlib
 import json
-import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...core import audit
-from ...core.db import escritura
-from ...core.deps import Usuario, get_cifrador, get_conn, get_ip, usuario_actual
+from ...core.deps import Usuario, get_cifrador, get_directus, get_ip, usuario_actual
+from ...core.directus import Directus, exigir, traducir
 from ...core.openapi import ERRORES_ESCRITURA, RESPUESTAS
-from ...core.recurso import traducir_error
+from ...importacion.referencias import DirectusReferencias
 from ...importacion.spec import ORDEN_DE_CARGA, PLANTILLAS
 from ...importacion.validar import validar
 
@@ -21,7 +21,9 @@ router = APIRouter(prefix="/importaciones", tags=["importación"], responses={**
 LIMITE_BYTES = 5_000_000
 
 
-@router.get("/plantillas", summary="Plantillas que el usuario puede cargar", description="Solo requiere sesión iniciada: lista las colecciones que el usuario puede cargar según sus permisos (`catalogo.importar` o `finanzas.editar`), con sus columnas y las colecciones que deben cargarse antes.")
+@router.get("/plantillas", summary="Plantillas que el usuario puede cargar",
+            description="Solo requiere sesión iniciada: lista las colecciones que el usuario puede cargar según sus permisos "
+                        "(`catalogo.importar` o `finanzas.editar`), con sus columnas y las colecciones que deben cargarse antes.")
 def plantillas(usuario: Usuario = Depends(usuario_actual)):
     return [{"coleccion": c, "descripcion": PLANTILLAS[c].descripcion, "permiso": PLANTILLAS[c].permiso_edicion,
              "depende_de": list(PLANTILLAS[c].dependencias), "columnas": [x.nombre for x in PLANTILLAS[c].columnas]}
@@ -29,19 +31,18 @@ def plantillas(usuario: Usuario = Depends(usuario_actual)):
 
 
 @router.post("/{coleccion}", summary="Validar o cargar un CSV",
-             description="El cuerpo es el CSV en UTF-8 (`Content-Type: text/csv`), con los encabezados de la plantilla. Sin `confirmar` solo valida; "
-                         "con `confirmar=true` carga todas las filas o ninguna. La respuesta trae, por fila, la columna, qué falló y cómo corregirlo. "
-                         "El permiso depende de la colección (`catalogo.importar` o `finanzas.editar`) y se aplica por departamento. "
-                         "Cada importación queda registrada con usuario e IP.",
+             description="El cuerpo es el CSV en UTF-8 (`Content-Type: text/csv`), con los encabezados de la plantilla. Sin `confirmar` solo "
+                         "valida; con `confirmar=true` carga todas las filas o ninguna. La respuesta trae, por fila, la columna, qué falló y "
+                         "cómo corregirlo. El permiso depende de la colección (`catalogo.importar` o `finanzas.editar`) y se aplica por "
+                         "departamento. Cada importación queda registrada con usuario e IP.",
              responses={413: {"description": "El archivo supera los 5 MB."}, 422: {"description": "No está en UTF-8."}})
-async def importar(coleccion: str, request: Request, confirmar: bool = False,
-                   usuario: Usuario = Depends(usuario_actual), conn: sqlite3.Connection = Depends(get_conn),
-                   ip: str | None = Depends(get_ip), cif=Depends(get_cifrador)):
+async def importar(coleccion: str, request: Request, confirmar: bool = False, usuario: Usuario = Depends(usuario_actual),
+                   directus: Directus = Depends(get_directus), ip: str | None = Depends(get_ip), cif=Depends(get_cifrador)):
     plantilla = PLANTILLAS.get(coleccion)
     if plantilla is None:
         raise HTTPException(404, "No hay plantilla para esa colección")
     if not usuario.tiene(plantilla.permiso_edicion):
-        audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="acceso_denegado", resultado="denegado",
+        audit.registrar(directus, usuario_id=usuario.mirror_id, ip=ip, accion="acceso_denegado", resultado="denegado",
                         entidad=plantilla.tabla_db, detalle={"operacion": "importar", "permiso": plantilla.permiso_edicion})
         raise HTTPException(403, f"Falta el permiso {plantilla.permiso_edicion}")
     cuerpo = await request.body()
@@ -51,10 +52,18 @@ async def importar(coleccion: str, request: Request, confirmar: bool = False,
         texto = cuerpo.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(422, "El archivo debe estar en UTF-8. Guárdelo como CSV UTF-8 desde la planilla.") from None
-    informe = validar(plantilla, texto, conn, cif)
+    return _importar(plantilla, texto, cuerpo, request.headers.get("x-archivo", f"{coleccion}.csv")[:200], confirmar,
+                     usuario, directus, ip, cif)
+
+
+def _importar(plantilla, texto, crudo, nombre_archivo, confirmar, usuario, directus, ip, cif):
+    informe = validar(plantilla, texto, DirectusReferencias(directus, usuario, ip, cif), cif)
     # alcance por departamento: cada fila se carga solo donde el usuario tiene el permiso
     for f in informe["filas"]:
-        depto = _departamento_de(conn, f["destino"])
+        depto = f["destino"].get("departamento_id")
+        if depto is None and "periodo_id" in f["destino"]:
+            fila = directus.uno("catalogo_periodo", f["destino"]["periodo_id"], token=usuario.token, ip=ip, campos="departamento_id")
+            depto = (fila.datos or {}).get("departamento_id")
         if not f["errores"] and depto is not None and not usuario.puede_en(plantilla.permiso_edicion, depto):
             f["errores"].append({"columna": "departamento", "gravedad": "bloqueante",
                                  "falla": "No tiene permiso para cargar datos en ese departamento.",
@@ -63,28 +72,25 @@ async def importar(coleccion: str, request: Request, confirmar: bool = False,
             informe["resumen"]["con_errores"] += 1
             informe["resumen"]["validas"] -= 1
     estado = "lista" if informe["ok"] else "con_errores"
-    try:
-        with escritura(conn, usuario.id, ip):
-            imp_id = conn.execute(
-                "INSERT INTO plataforma_importacion (departamento_id, fuente, version_importador, archivo_nombre, archivo_sha256, estado, creada_por) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (1, plantilla.fuente, f"{coleccion}@1", request.headers.get("x-archivo", f"{coleccion}.csv")[:200],
-                 hashlib.sha256(cuerpo).hexdigest(), estado, usuario.id)).lastrowid
-            conn.executemany(
-                "INSERT INTO plataforma_fila_importada (importacion_id, numero_fila, datos, errores) VALUES (?, ?, ?, ?)",
-                [(imp_id, f["fila"], json.dumps(_proteger(plantilla, f["datos"], cif), ensure_ascii=False),
-                  json.dumps(f["errores"], ensure_ascii=False)) for f in informe["filas"]])
-            if confirmar and informe["ok"]:
-                for f in informe["filas"]:
-                    columnas = {k: v for k, v in f["destino"].items() if v is not None and k != "-"}
-                    conn.execute(f"INSERT INTO {plantilla.tabla_db} ({', '.join(columnas)}) VALUES ({', '.join('?' * len(columnas))})",
-                                 list(columnas.values()))
-                conn.execute("UPDATE plataforma_importacion SET estado = 'confirmada' WHERE id = ?", (imp_id,))
-                estado = "confirmada"
-            audit.registrar(conn, usuario_id=usuario.id, ip=ip, accion="importacion", entidad="plataforma_importacion",
-                            entidad_id=imp_id, detalle={"coleccion": coleccion, "estado": estado, **informe["resumen"]})
-    except sqlite3.Error as exc:
-        raise traducir_error(exc) from exc
+    imp = exigir(directus.pedir("POST", "/items/plataforma_importacion", token=usuario.token, ip=ip, params={"fields": "id"}, json={
+        "fuente": plantilla.fuente, "version_importador": f"{plantilla.coleccion}@1", "archivo_nombre": nombre_archivo,
+        "archivo_sha256": hashlib.sha256(crudo).hexdigest(), "estado": estado, "creada_por": usuario.mirror_id}))
+    imp_id = imp.datos["id"]
+    if informe["filas"]:
+        exigir(directus.pedir("POST", "/items/plataforma_fila_importada", token=usuario.token, ip=ip, json=[
+            {"importacion_id": imp_id, "numero_fila": f["fila"],
+             "datos": json.dumps(_proteger(plantilla, f["datos"], cif), ensure_ascii=False),
+             "errores": json.dumps(f["errores"], ensure_ascii=False)} for f in informe["filas"]]))
+    if confirmar and informe["ok"]:
+        filas = [{k: v for k, v in f["destino"].items() if v is not None and k != "-"} for f in informe["filas"]]
+        r = directus.pedir("POST", f"/items/{plantilla.tabla_db}", token=usuario.token, ip=ip, json=filas)
+        if r.estado >= 400:
+            directus.pedir("PATCH", f"/items/plataforma_importacion/{imp_id}", token=usuario.token, ip=ip, json={"estado": "con_errores"})
+            raise traducir(r)
+        exigir(directus.pedir("PATCH", f"/items/plataforma_importacion/{imp_id}", token=usuario.token, ip=ip, json={"estado": "confirmada"}))
+        estado = "confirmada"
+    audit.registrar(directus, usuario_id=usuario.mirror_id, ip=ip, accion="importacion", entidad="plataforma_importacion",
+                    entidad_id=imp_id, detalle={"coleccion": plantilla.coleccion, "estado": estado, **informe["resumen"]})
     for f in informe["filas"]:
         f.pop("destino", None)
     return {"importacion_id": imp_id, "estado": estado, **informe}
@@ -98,12 +104,3 @@ def _proteger(plantilla, datos: dict, cif) -> dict:
 
 def _es_pii(plantilla, nombre: str) -> bool:
     return any(c.nombre == nombre and c.es_pii for c in plantilla.columnas)
-
-
-def _departamento_de(conn, destino: dict) -> int | None:
-    if "departamento_id" in destino:
-        return destino["departamento_id"]
-    if "periodo_id" in destino:
-        fila = conn.execute("SELECT departamento_id FROM catalogo_periodo WHERE id = ?", (destino["periodo_id"],)).fetchone()
-        return None if fila is None else fila[0]
-    return None
